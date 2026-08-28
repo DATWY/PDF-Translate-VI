@@ -517,7 +517,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         thread_val = self.config.get("threads", DEFAULT_THREADS)
         self.threads_slider = ctk.CTkSlider(
-            p_frame, from_=1, to=256, number_of_steps=255,
+            p_frame, from_=1, to=512, number_of_steps=511,
             command=self._on_threads_change,
         )
         self.threads_slider.set(thread_val)

@@ -6,9 +6,11 @@ import html
 import json
 import logging
 import re
+import socket
 import threading
 import unicodedata
 from typing import Any, ClassVar
+from urllib3.util.retry import Retry
 
 import requests
 
@@ -136,19 +138,28 @@ class GoogleTranslator(BaseTranslator):
             **kwargs,
         )
         self.session = requests.Session()
+        retry_strategy = Retry(
+            total=5,
+            backoff_factor=0.1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"],
+        )
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=256,
-            pool_maxsize=256,
-            max_retries=3,
+            pool_connections=512,
+            pool_maxsize=512,
+            max_retries=retry_strategy,
         )
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
+        # Pre-resolve DNS and keep TCP alive to eliminate per-request overhead
         self.endpoint = "https://translate.google.com/m"
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
-            )
+            ),
+            "Connection": "keep-alive",
+            "Accept-Encoding": "gzip, deflate, br",
         }
 
     def do_translate(self, text: str) -> str:
@@ -156,7 +167,7 @@ class GoogleTranslator(BaseTranslator):
             self.endpoint,
             params={"tl": self.lang_out, "sl": self.lang_in, "q": text[:5000]},
             headers=self.headers,
-            timeout=30,
+            timeout=15,
         )
         if response.status_code == 400:
             raise RuntimeError("Google Translate rejected the text segment")
@@ -183,7 +194,7 @@ class GoogleTranslator(BaseTranslator):
 
         for text in texts:
             t_len = len(text) + len(self.DELIMITER)
-            if current_chunk and (current_len + t_len > 3500 or len(current_chunk) >= 15):
+            if current_chunk and (current_len + t_len > 4800 or len(current_chunk) >= 50):
                 chunks.append(current_chunk)
                 current_chunk = [text]
                 current_len = len(text)

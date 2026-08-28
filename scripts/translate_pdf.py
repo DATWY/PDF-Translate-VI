@@ -39,8 +39,8 @@ ENGINES = ("google", "handoff")
 # Measured on an eight-page sample: 2 threads 48s, 4 threads 30s, 8 threads 27s,
 # 12 threads 29s. Past four, the layout pass rather than the network is the floor,
 # and more concurrency only raises the odds of the service throttling a long run.
-DEFAULT_THREADS = min(os.cpu_count() or 8, 16)
-MAX_THREADS = 256
+DEFAULT_THREADS = min(os.cpu_count() or 8, 32)
+MAX_THREADS = 512
 
 
 class TranslationError(RuntimeError):

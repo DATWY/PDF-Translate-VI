@@ -81,7 +81,7 @@ class TranslationCache:
                 original_text=original_text,
             )
             if result:
-                if len(self._mem_cache) < 10000:
+                if len(self._mem_cache) < 100000:
                     self._mem_cache[original_text] = result.translation
                 return result.translation
         except Exception:
@@ -90,7 +90,7 @@ class TranslationCache:
 
     def set(self, original_text: str, translation: str):
         # Store in Tier 1 RAM
-        if len(self._mem_cache) < 10000:
+        if len(self._mem_cache) < 100000:
             self._mem_cache[original_text] = translation
 
         # Store in Tier 2 SQLite
@@ -116,7 +116,9 @@ def init_db(remove_exists=False):
         cache_db_path,
         pragmas={
             "journal_mode": "wal",
-            "busy_timeout": 1000,
+            "busy_timeout": 5000,
+            "cache_size": -64000,
+            "synchronous": "normal",
         },
     )
     db.create_tables([_TranslationCache], safe=True)
