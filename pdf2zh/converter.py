@@ -742,7 +742,8 @@ class TranslateConverter(PDFConverterEx):
             log.debug(f"< {y} {x} {x0} {x1} {size} {brk} > {sstk[id]} | {new}")
 
             ops_vals: list[dict] = []
-
+            is_pure_layout = bool(re.match(r"^(\{\s*v[\d\s]+\}|\s)+$", new)) and (new == sstk[id])
+            
             while ptr < len(new):
                 vy_regex = re.match(
                     r"\{\s*v([\d\s]+)\}", new[ptr:], re.IGNORECASE
@@ -841,14 +842,18 @@ class TranslateConverter(PDFConverterEx):
                         vc = chr(vch.cid)
                         font_res_id = getattr(self, "fontid", {}).get(vch.font, self.noto_name)
                         vch_color = getattr(getattr(vch, 'graphicstate', None), 'ncolor', None)
+                        
+                        vch_x = vch.x0 if is_pure_layout else (x + vch.x0 - ref_min_x)
+                        vch_dy = (vch.y0 - y) if is_pure_layout else (vch.y0 - ref_base_y)
+                        
                         ops_vals.append({
                             "type": OpType.TEXT,
                             "font": font_res_id,
                             "size": vch.size,
-                            "x": x + vch.x0 - ref_min_x,
-                            "dy": vch.y0 - ref_base_y,
+                            "x": vch_x,
+                            "dy": vch_dy,
                             "rtxt": raw_string(font_res_id, vc),
-                            "lidx": lidx,
+                            "lidx": 0 if is_pure_layout else lidx,
                             "color": vch_color,
                         })
                         if log.isEnabledFor(logging.DEBUG):
@@ -857,14 +862,18 @@ class TranslateConverter(PDFConverterEx):
                     for l in varl[vid]:
                         if l.linewidth < 5:
                             l_color = getattr(l, 'stroking_color', getattr(l, 'non_stroking_color', None))
+                            
+                            l_x = l.pts[0][0] if is_pure_layout else (l.pts[0][0] + x - ref_min_x)
+                            l_dy = (l.pts[0][1] - y) if is_pure_layout else (l.pts[0][1] - ref_base_y)
+                            
                             ops_vals.append({
                                 "type": OpType.LINE,
-                                "x": l.pts[0][0] + x - ref_min_x,
-                                "dy": l.pts[0][1] - ref_base_y,
+                                "x": l_x,
+                                "dy": l_dy,
                                 "linewidth": l.linewidth,
                                 "xlen": l.pts[1][0] - l.pts[0][0],
                                 "ylen": l.pts[1][1] - l.pts[0][1],
-                                "lidx": lidx,
+                                "lidx": 0 if is_pure_layout else lidx,
                                 "color": l_color,
                             })
                 else:

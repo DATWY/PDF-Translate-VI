@@ -14,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $python = Join-Path $root ".venv\Scripts\python.exe"
-$output = Join-Path $root "dist_v4\PDFTranslate"
+$output = Join-Path $root "dist_v5\PDFTranslate"
 
 $running = Get-Process -Name "PDFTranslate" -ErrorAction SilentlyContinue
 if ($running) {
@@ -37,7 +37,7 @@ if (-not $SkipAssets) {
 }
 
 Write-Host "==> Running PyInstaller" -ForegroundColor Cyan
-$dist_dir = Join-Path $root "dist_v4"
+$dist_dir = Join-Path $root "dist_v5"
 & $python -m PyInstaller --noconfirm --clean --distpath $dist_dir (Join-Path $root "app.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
@@ -67,7 +67,7 @@ if ($missing) {
     throw "Incomplete build, refusing to package. Missing:`n  " + ($missing -join "`n  ")
 }
 
-$archive = Join-Path $root "dist_v4\PDFTranslate-windows.zip"
+$archive = Join-Path $root "dist_v5\PDFTranslate-windows.zip"
 Write-Host "==> Zipping to $archive" -ForegroundColor Cyan
 & $python -c "import zipfile, os; src=r'$output'; dst=r'$archive'; zf=zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED); [zf.write(os.path.join(r, f), os.path.relpath(os.path.join(r, f), src)) for r, d, files in os.walk(src) for f in files]; zf.close()"
 
