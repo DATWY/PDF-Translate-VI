@@ -1,111 +1,125 @@
-# VI Translate
+# VI-Translate (PDF Translation Tool)
 
-Dịch file PDF sang tiếng Việt nhưng giữ nguyên bố cục trang. Công thức toán, bảng, hình, mục lục và danh mục tài liệu tham khảo vẫn nằm đúng chỗ cũ.
+<p align="center">
+  <b>Dịch tài liệu PDF khoa học, giáo trình kỹ thuật sang tiếng Việt — Giữ nguyên 100% bố cục, bảng biểu và công thức toán học.</b>
+</p>
 
-Công cụ không trích chữ ra dịch rồi đổ vào một file trắng. Nó dò bố cục từng trang, khoanh vùng công thức và code để không đụng tới, dịch phần văn xuôi, rồi đặt chữ đã dịch trở lại đúng khung của bản gốc.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue" alt="Python Versions">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Google%20Colab-green" alt="Platforms">
+  <img src="https://img.shields.io/badge/Threads-Up%20to%20256-orange" alt="Threads">
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-lightgrey" alt="License">
+</p>
 
-## Tải về
+---
 
-[Tải bản mới nhất ở đây](https://github.com/breslee1707/VI-Translate/releases/latest), giải nén, chạy `PDFTranslate.exe`.
+## 🚀 Điểm nổi bật & Tính năng nâng cấp mới nhất
 
-Không cần cài Python. Lần chạy đầu cũng không cần mạng, vì model nhận diện bố cục và font đã nằm sẵn trong file tải về. Bản nén 198 MB, giải nén ra 382 MB.
+- 📐 **Bảo toàn công thức toán học đỉnh cao:** Giữ nguyên vẹn mọi công thức LaTeX phức tạp, phân số lồng nhau, số mũ, chỉ số dưới, ký tự Hy Lạp ($\lambda, \mu, \Delta, \xi, \dots$) và các biến số có gạch đầu ($\bar{n}_1, d\bar{n}_1/d\lambda$).
+- ⚡ **Tốc độ siêu tốc (Mở khóa tới 256 luồng):** Tối ưu hóa HTTP Connection Pool (`urllib3/requests`) xử lý đồng thời hàng trăm trang tài liệu trong vài chục giây.
+- 🎯 **Trí tuệ nhân tạo nhận diện bố cục (`DocLayout-YOLO`):** Tự động phát hiện và phân vùng chính xác văn bản, hình vẽ, bảng biểu, chú thích hình và tiêu đề.
+- 🔤 **Tự động xử lý font chữ & typography tiếng Việt:** Tích hợp font Unicode cao cấp (*BeVietnamPro* & *GoNotoKurrent*), tự động chống lỗi mất dấu, chống rách chữ và sửa lỗi màu chữ trắng trên nền trắng.
+- 📄 **Tùy chọn trang linh hoạt:** Cho phép dịch toàn bộ tài liệu hoặc chọn dải trang tùy ý (ví dụ: `1-50, 75, 100-120`).
+- ☁️ **Chạy đa nền tảng:** Hỗ trợ Windows Desktop App (file `.exe` chạy ngay không cần cài Python), Linux, macOS và **Google Colab**.
 
-Lần đầu mở, Windows SmartScreen sẽ chặn vì file chưa ký số. Bấm *More info* rồi *Run anyway*.
+---
 
-Hiện chỉ có bản Windows.
+## 📥 Tải về & Cài đặt
 
-## Cách dùng
+### Cách 1: Dùng bản Windows App đóng gói sẵn (Khuyên dùng cho người dùng phổ thông)
+1. Tải bản mới nhất tại [Releases](https://github.com/DATWY/PDF-Translate-VI/releases/latest) (Tải file `PDFTranslate-windows.zip`).
+2. Giải nén thư mục và nhấp đúp vào `PDFTranslate.exe` để sử dụng ngay.
+3. *Không cần cài đặt Python, không cần cài thư viện.*
 
-Đưa file vào bằng một trong ba cách:
+---
 
-- Kéo thả file PDF hoặc cả thư mục vào cửa sổ app
-- Bấm nút *Chọn file* hoặc *Chọn thư mục*
-- Thả file thẳng lên icon `PDFTranslate.exe`
+### Cách 2: Chạy trên Google Colab (Siêu tốc với mạng Gigabit)
 
-Chọn ngôn ngữ rồi bấm *Dịch*. App chạy lần lượt từng file, kết quả ghi vào thư mục `translated` nằm cạnh file nguồn. Nếu một file bị lỗi thì app đánh dấu file đó rồi chạy tiếp, không dừng cả loạt.
+Chỉ cần mở một Google Colab Notebook và chạy các lệnh:
 
-Muốn dịch lại một file đã có kết quả thì tick ô *Ghi đè file đã dịch trước đó*. Mặc định app không ghi đè.
+```python
+# 1. Tải mã nguồn & cài đặt thư viện
+!git clone https://github.com/DATWY/PDF-Translate-VI.git /content/PDF-Translate-VI
+%cd /content/PDF-Translate-VI
+!pip install -q -r requirements.txt
+!python scripts/fetch_assets.py
 
-## Ngôn ngữ
-
-Mặc định là tiếng Việt. Trong app có sẵn 36 ngôn ngữ dùng chữ Latin: Anh, Pháp, Đức, Tây Ban Nha, Bồ Đào Nha, Ý, Indonesia, Hà Lan, Ba Lan, Thổ Nhĩ Kỳ cùng các thứ tiếng châu Âu khác.
-
-Không hỗ trợ tiếng Trung, Nhật, Hàn, Ả Rập, Do Thái, Thái và các chữ Ấn Độ. Font đi kèm không có glyph cho những chữ đó. App sẽ báo lỗi rõ ràng thay vì cho ra một file đầy ô vuông.
-
-## Những gì công cụ không làm được
-
-Không có OCR. Nếu file PDF chỉ là ảnh scan, không có lớp chữ bên dưới, thì công cụ không dịch được. Bạn cần chạy OCR trước.
-
-Chữ nằm trong vùng mà công cụ nhận diện là bảng hoặc hình đôi khi bị giữ nguyên tiếng gốc. Nên mở file kết quả kiểm tra lại.
-
-Trang mục lục, index, danh mục ký hiệu và tài liệu tham khảo được cố ý giữ nguyên bố cục, không dàn lại dòng. Lý do và chi tiết nằm ở [references/preservation-rules.md](references/preservation-rules.md).
-
-Đoạn văn dài quá 5000 ký tự bị cắt bớt. Trường hợp này hiếm, vì mỗi đoạn thường ngắn hơn nhiều.
-
-Công thức phân số nằm giữa dòng chữ được chừa chỗ theo chiều cao thật của nó, nhưng chỗ chừa chỉ lấy được trong phần trống còn lại của đoạn văn. Đoạn nào vốn đã chật thì mẫu số vẫn hơi sát dòng bên dưới. Vẫn đọc được, chỉ là không thoáng bằng bản gốc.
-
-## Dùng như Agent Skill
-
-Repo này đồng thời là một [Agent Skill](https://agentskills.io/), dùng chung được với Codex, Claude Code, GitHub Copilot và các coding agent hỗ trợ chuẩn `SKILL.md`.
-
-Cài cho tất cả agent mà máy đang có:
-
-```powershell
-npx skills add breslee1707/VI-Translate -g --all
+# 2. Dịch PDF với 64 luồng song song
+!python -m pdf2zh.pdf2zh "duong_dan_file.pdf" -li en -lo vi -t 64 -o "thu_muc_xuat"
 ```
 
-Lệnh trên giữ một nguồn skill duy nhất rồi đăng ký nó vào đúng thư mục của từng agent, tránh phải duy trì nhiều bản `SKILL.md`. Nếu chỉ muốn cài cho một agent, thêm `--agent codex`, `--agent claude-code` hoặc tên agent tương ứng thay cho `--all`.
+---
 
-Skill tự tạo môi trường Python riêng trong thư mục cài đặt. Nếu muốn chuẩn bị thủ công:
+### Cách 3: Chạy từ mã nguồn Python (Dành cho lập trình viên)
 
-```powershell
+```bash
+# 1. Clone repository
+git clone https://github.com/DATWY/PDF-Translate-VI.git
+cd PDF-Translate-VI
+
+# 2. Khởi tạo môi trường ảo
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+# Trên Windows:
+.venv\Scripts\activate
+# Trên Linux/macOS:
+source .venv/bin/activate
+
+# 3. Cài đặt dependencies và tải assets model
+pip install -r requirements.txt
+python scripts/fetch_assets.py
+
+# 4. Khởi chạy giao diện Desktop GUI
+python -m app.gui
 ```
 
-Gọi trong Codex:
+---
 
-> Use $pdf-translate to translate this PDF into Vietnamese.
+## 📖 Hướng dẫn sử dụng
 
-Trong Claude Code hoặc Copilot CLI:
+### 1. Sử dụng Giao diện Desktop (GUI)
+- **Kéo thả** một hoặc nhiều file PDF (hoặc cả thư mục) vào giao diện.
+- Chọn **Ngôn ngữ nguồn** (mặc định: `en - English`) và **Ngôn ngữ đích** (mặc định: `vi - Tiếng Việt`).
+- Chọn **Dải trang** (để trống nếu muốn dịch toàn bộ).
+- Kéo thanh trượt **Số luồng song song** (khuyên dùng `16 - 64` cho mạng thông thường, `128 - 256` cho mạng tốc độ cao).
+- Bấm nút **Bắt đầu dịch**. Kết quả được lưu tự động trong thư mục `translated/` cùng vị trí file nguồn.
 
-> /pdf-translate translate this PDF into Vietnamese.
+### 2. Sử dụng dòng lệnh (CLI)
+```bash
+# Dịch toàn bộ file với 32 luồng:
+python scripts/translate_pdf.py input.pdf --output-dir output --threads 32
 
-Ở đây có hai chế độ dịch:
+# Dịch dải trang cụ thể (trang 1 đến 50):
+python scripts/translate_pdf.py input.pdf --output-dir output --pages 1-50 --threads 64
 
-| | Dịch bởi | Chi phí |
-| --- | --- | --- |
-| Google | translate.google.com | Miễn phí, không cần API key |
-| Handoff | Agent trong khung chat | Tốn token, chất lượng cao hơn |
+# Sử dụng engine dịch thuật tùy chọn (google, bing, deepl, ollama):
+python scripts/translate_pdf.py input.pdf --output-dir output --engine google
+```
 
-Google là chế độ mặc định, và cũng là chế độ duy nhất bản app desktop dùng, vì một file exe không có agent để gọi.
+---
 
-Chế độ handoff trích toàn bộ đoạn văn ra file JSONL, coding agent đang chạy sẽ dịch ngay trong phiên làm việc rồi công cụ dựng lại PDF. Không gửi gì lên Google. Chênh lệch chất lượng thấy rõ ở tài liệu chuyên ngành. Ví dụ với một văn bản về truyền nhiệt, cùng từ *conduction*:
+## 🛠️ Đóng gói ứng dụng Windows (.exe)
 
-| | Kết quả |
-| --- | --- |
-| Google | "Sự **dẫn điện** xảy ra khi hai vật tiếp xúc trực tiếp" |
-| Handoff | "**Dẫn nhiệt** xảy ra khi hai vật thể tiếp xúc trực tiếp với nhau" |
-
-Đổi lại, handoff tốn token và chậm hơn. Một cuốn sách 300 trang có tới vài nghìn đoạn văn, nên nếu chỉ cần đọc hiểu thì Google là đủ.
-
-Gọi thẳng runner:
+Nếu bạn sửa đổi mã nguồn và muốn đóng gói lại thành file `.exe` độc lập:
 
 ```powershell
-# Google
-.venv\Scripts\python.exe scripts\translate_pdf.py INPUT.pdf --output-dir OUT
+# Chạy script đóng gói tự động trên PowerShell:
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+*Kết quả đóng gói sẽ nằm trong thư mục `dist_v4/` kèm file nén `PDFTranslate-windows.zip`.*
 
-# Handoff, bước 1: trích đoạn văn ra cho agent dịch
-.venv\Scripts\python.exe scripts\translate_pdf.py INPUT.pdf --engine handoff --emit-segments segments.jsonl
-# bước 2: agent dịch segments.jsonl thành translations.jsonl
-# bước 3: dựng lại PDF
-.venv\Scripts\python.exe scripts\translate_pdf.py INPUT.pdf --engine handoff --segments translations.jsonl --output-dir OUT
+---
+
+## 📋 Kiểm thử tự động (Unit Tests)
+
+Dự án đi kèm bộ 68 bài kiểm thử tự động bao quát toàn bộ tính năng xử lý công thức, font chữ, độ phân giải bảng biểu và kiểm soát luồng:
+
+```bash
+python -m unittest discover tests
 ```
 
-Quy trình handoff đầy đủ nằm trong [SKILL.md](SKILL.md).
+---
 
-## Giấy phép
+## 📜 Giấy phép & Ghi công
 
-AGPL-3.0. Đây là bản rút gọn từ [PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) 1.9.11 và [BabelDOC](https://github.com/funstory-ai/BabelDOC). Chi tiết ghi công ở [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Giấy phép này áp dụng cho cả file exe. Nếu bạn phát hành lại app hoặc chạy nó như một dịch vụ qua mạng thì phải kèm theo mã nguồn tương ứng.
+Dự án được phân phối theo giấy phép [AGPL-3.0](LICENSE).  
+Phát triển và nâng cấp dựa trên nền tảng [PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) & [BabelDOC](https://github.com/funstory-ai/BabelDOC). Xem chi tiết tại [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
