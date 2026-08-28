@@ -157,39 +157,31 @@ def translate_patch(
         target_pageids.append(pageno)
 
     logger.info("Phase 1: Pre-computing layouts for %d pages...", len(target_pageids))
-    for pageno in target_pageids:
-        if cancellation_event and cancellation_event.is_set():
-            raise CancelledError("task cancelled")
+    with tqdm.tqdm(total=total_pages * 2) as progress:
+        progress.set_description("Phase 1: Layout")
+        for pageno in target_pageids:
+            if cancellation_event and cancellation_event.is_set():
+                raise CancelledError("task cancelled")
 
-        page_rect = doc_zh[pageno].rect
-        page_area = page_rect.width * page_rect.height
-        page_blocks = doc_zh[pageno].get_text("dict")["blocks"]
-        if is_scanned_page(page_blocks, page_area):
-            pre_scanned.add(pageno)
+            page_rect = doc_zh[pageno].rect
+            page_area = page_rect.width * page_rect.height
+            page_blocks = doc_zh[pageno].get_text("dict")["blocks"]
+            if is_scanned_page(page_blocks, page_area):
+                pre_scanned.add(pageno)
 
-        pix = doc_zh[pageno].get_pixmap()
-        image = np.frombuffer(pix.samples, np.uint8).reshape(
-            pix.height, pix.width, 3
-        )[:, :, ::-1]
-        target_imgsz = min(max(int(pix.height / 32) * 32, 640), 768)
-        page_layout = model.predict(image, imgsz=target_imgsz)[0]
-        box = np.ones((pix.height, pix.width))
-        h, w = box.shape
-        non_vcls_boxes = [
-            (i, d) for i, d in enumerate(page_layout.boxes)
-            if page_layout.names[int(d.cls)] not in vcls
-        ]
-        for i, d in reversed(non_vcls_boxes):
-            x0, y0, x1, y1 = d.xyxy.squeeze()
-            x0, y0, x1, y1 = (
-                np.clip(int(x0 - 1), 0, w - 1),
-                np.clip(int(h - y1 - 1), 0, h - 1),
-                np.clip(int(x1 + 1), 0, w - 1),
-                np.clip(int(h - y0 + 1), 0, h - 1),
-            )
-            box[y0:y1, x0:x1] = i + 2
-        for i, d in enumerate(page_layout.boxes):
-            if page_layout.names[int(d.cls)] in vcls:
+            pix = doc_zh[pageno].get_pixmap()
+            image = np.frombuffer(pix.samples, np.uint8).reshape(
+                pix.height, pix.width, 3
+            )[:, :, ::-1]
+            target_imgsz = min(max(int(pix.height / 32) * 32, 640), 768)
+            page_layout = model.predict(image, imgsz=target_imgsz)[0]
+            box = np.ones((pix.height, pix.width))
+            h, w = box.shape
+            non_vcls_boxes = [
+                (i, d) for i, d in enumerate(page_layout.boxes)
+                if page_layout.names[int(d.cls)] not in vcls
+            ]
+            for i, d in reversed(non_vcls_boxes):
                 x0, y0, x1, y1 = d.xyxy.squeeze()
                 x0, y0, x1, y1 = (
                     np.clip(int(x0 - 1), 0, w - 1),
@@ -197,51 +189,65 @@ def translate_patch(
                     np.clip(int(x1 + 1), 0, w - 1),
                     np.clip(int(h - y0 + 1), 0, h - 1),
                 )
-                box[y0:y1, x0:x1] = 0
+                box[y0:y1, x0:x1] = i + 2
+            for i, d in enumerate(page_layout.boxes):
+                if page_layout.names[int(d.cls)] in vcls:
+                    x0, y0, x1, y1 = d.xyxy.squeeze()
+                    x0, y0, x1, y1 = (
+                        np.clip(int(x0 - 1), 0, w - 1),
+                        np.clip(int(h - y1 - 1), 0, h - 1),
+                        np.clip(int(x1 + 1), 0, w - 1),
+                        np.clip(int(h - y0 + 1), 0, h - 1),
+                    )
+                    box[y0:y1, x0:x1] = 0
 
-        page_text = doc_zh[pageno].get_text("text")
-        preservation = classify_preserved_page(page_text)
-        pre_layouts[pageno] = box
-        if preservation is not None:
-            pre_preservations[pageno] = preservation
-
-    logger.info("Phase 1 complete: all layouts pre-computed.")
-
-    # ================================================================
-    # PHASE 2: Process pages with pre-computed layouts
-    # PDF parsing + translation with full thread parallelism
-    # ================================================================
-    logger.info("Phase 2: Processing pages with translation...")
-    with tqdm.tqdm(total=total_pages) as progress:
-        for pageno, page in all_pages_enum:
-            if cancellation_event and cancellation_event.is_set():
-                raise CancelledError("task cancelled")
-            if pages and (pageno not in pages):
-                continue
+            page_text = doc_zh[pageno].get_text("text")
+            preservation = classify_preserved_page(page_text)
+            pre_layouts[pageno] = box
+            if preservation is not None:
+                pre_preservations[pageno] = preservation
+                
             progress.update()
             if callback:
                 callback(progress)
-            page.pageno = pageno
 
-            if pageno in pre_preservations:
-                pres = pre_preservations[pageno]
-                logger.info(
-                    "Page %s detected as %s (%s)",
-                    pageno + 1,
-                    pres.kind,
-                    pres.detail,
-                )
+        logger.info("Phase 1 complete: all layouts pre-computed.")
 
-            layout[page.pageno] = pre_layouts[pageno]
-            if pageno in pre_scanned:
-                device.scanned_pages.add(pageno)
-            page.page_xref = doc_zh.get_new_xref()
-            doc_zh.update_object(page.page_xref, "<<>>")
-            doc_zh.update_stream(page.page_xref, b"")
-            doc_zh[page.pageno].set_contents(page.page_xref)
-            interpreter.process_page(page)
+        # ================================================================
+        # PHASE 2: Process pages with pre-computed layouts
+        # PDF parsing + translation with full thread parallelism
+        # ================================================================
+        logger.info("Phase 2: Processing pages with translation...")
+        progress.set_description("Phase 2: Translate")
+        for pageno, page in all_pages_enum:
+                if cancellation_event and cancellation_event.is_set():
+                    raise CancelledError("task cancelled")
+                if pages and (pageno not in pages):
+                    continue
+                progress.update()
+                if callback:
+                    callback(progress)
+                page.pageno = pageno
 
-    device.close()
+                if pageno in pre_preservations:
+                    pres = pre_preservations[pageno]
+                    logger.info(
+                        "Page %s detected as %s (%s)",
+                        pageno + 1,
+                        pres.kind,
+                        pres.detail,
+                    )
+
+                layout[page.pageno] = pre_layouts[pageno]
+                if pageno in pre_scanned:
+                    device.scanned_pages.add(pageno)
+                page.page_xref = doc_zh.get_new_xref()
+                doc_zh.update_object(page.page_xref, "<<>>")
+                doc_zh.update_stream(page.page_xref, b"")
+                doc_zh[page.pageno].set_contents(page.page_xref)
+                interpreter.process_page(page)
+
+        device.close()
     return obj_patch, device.translation_failures
 
 

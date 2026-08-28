@@ -34,7 +34,7 @@ class PreservationRuleTests(unittest.TestCase):
 
     def test_full_page_image_is_classified_as_scanned(self):
         self.assertTrue(
-            is_scanned_page([{"type": 1, "bbox": (0, 0, 80, 80)}], 10_000)
+            is_scanned_page([{"type": 1, "bbox": (0, 0, 95, 95)}], 10_000)
         )
         self.assertFalse(
             is_scanned_page([{"type": 1, "bbox": (0, 0, 20, 20)}], 10_000)

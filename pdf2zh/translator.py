@@ -195,7 +195,7 @@ class GoogleTranslator(BaseTranslator):
 
         for text in texts:
             t_len = len(text) + len(self.DELIMITER)
-            if current_chunk and (current_len + t_len > 4800 or len(current_chunk) >= 50):
+            if current_chunk and (current_len + t_len > 3500 or len(current_chunk) >= 15):
                 chunks.append(current_chunk)
                 current_chunk = [text]
                 current_len = len(text)
@@ -210,6 +210,11 @@ class GoogleTranslator(BaseTranslator):
             if len(chunk) == 1:
                 return [self.do_translate(chunk[0])]
             combined = self.DELIMITER.join(chunk)
+            
+            def fallback():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(15, len(chunk))) as p:
+                    return list(p.map(self.do_translate, chunk))
+                    
             try:
                 translated_combined = self.do_translate(combined)
                 parts = self.DELIMITER_REGEX.split(translated_combined)
@@ -221,10 +226,10 @@ class GoogleTranslator(BaseTranslator):
                         len(parts),
                         len(chunk),
                     )
-                    return [self.do_translate(t) for t in chunk]
+                    return fallback()
             except Exception as e:
                 logger.debug("Batch translation failed (%s), falling back to individual translation", e)
-                return [self.do_translate(t) for t in chunk]
+                return fallback()
 
         # Process ALL sub-chunks in PARALLEL instead of sequentially
         if len(chunks) == 1:

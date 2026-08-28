@@ -67,7 +67,7 @@ def is_scanned_page(blocks: Iterable[Mapping[str, Any]], page_area: float) -> bo
         if not isinstance(bbox, (tuple, list)) or len(bbox) != 4:
             continue
         x0, y0, x1, y1 = (float(value) for value in bbox)
-        if max(0.0, x1 - x0) * max(0.0, y1 - y0) > page_area * 0.5:
+        if max(0.0, x1 - x0) * max(0.0, y1 - y0) > page_area * 0.85:
             return True
     return False
 

@@ -19,7 +19,7 @@ BUNDLED_CORE = (SKILL_ROOT / "pdf2zh").resolve()
 if str(SKILL_ROOT) not in sys.path:
     sys.path.insert(0, str(SKILL_ROOT))
 
-CORE_VERSION = "1.9.11"
+CORE_VERSION = "2.0.0"
 RULESET = "code4life-preservation-v1"
 DEFAULT_TARGET_LANGUAGE = "vi"
 

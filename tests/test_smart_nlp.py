@@ -9,7 +9,9 @@ from pdf2zh.text_utils import (
     cleanup_vietnamese_typography,
     dehyphenate_text,
     protect_glossary,
+    protect_links,
     restore_glossary,
+    restore_links,
 )
 from scripts.translate_pdf import inspect_pdf
 
@@ -28,6 +30,55 @@ class SmartNLPTests(unittest.TestCase):
         dirty = "Dưới đây là một số từ , ví dụ ( như thế này ) và “ từ trong ngoặc kép ” . Thử nghiệm !"
         expected = "Dưới đây là một số từ, ví dụ (như thế này) và “từ trong ngoặc kép”. Thử nghiệm!"
         self.assertEqual(cleanup_vietnamese_typography(dirty), expected)
+
+    def test_protect_and_restore_links_and_urls(self):
+        text = "Available online: http://www.ti.com/product/AWR1243 (accessed on 11 September 2020)."
+        protected, lmap = protect_links(text)
+        self.assertIn("{u0}", protected)
+        self.assertNotIn("http://www.ti.com", protected)
+
+        # Simulate translated sentence
+        translated = "Có sẵn trực tuyến: {u0} (truy cập vào ngày 11 tháng 9 năm 2020)."
+        cleaned = cleanup_vietnamese_typography(translated)
+        restored = restore_links(cleaned, lmap)
+        self.assertEqual(
+            restored,
+            "Có sẵn trực tuyến: http://www.ti.com/product/AWR1243 (truy cập vào ngày 11 tháng 9 năm 2020).",
+        )
+
+    def test_protect_and_restore_citation_badges(self):
+        text = "J. Crit. Care 2012, 27, 424.e7-424.e13. [CrossRef] [PubMed]"
+        protected, lmap = protect_links(text)
+        self.assertIn("{u0}", protected)
+        self.assertIn("{u1}", protected)
+        self.assertNotIn("CrossRef", protected)
+        self.assertNotIn("PubMed", protected)
+
+        # Simulate translation with preserved badges
+        translated = "J. Phê bình. Chăm sóc 2012, 27, 424.e7-424.e13. {u0} {u1}"
+        cleaned = cleanup_vietnamese_typography(translated)
+        restored = restore_links(cleaned, lmap)
+        self.assertEqual(
+            restored,
+            "J. Phê bình. Chăm sóc 2012, 27, 424.e7-424.e13. [CrossRef] [PubMed]",
+        )
+
+    def test_protect_complex_urls_and_dois(self):
+        text = (
+            "Radar 60 GHz. Link: https://siliconradar.com/products/single-product/60-ghz-4tx4tr-mimo/ "
+            "or doi:10.1016/j.critcare.2012.04.013 [Google Scholar]."
+        )
+        protected, lmap = protect_links(text)
+        self.assertEqual(len(lmap), 3)
+
+        translated = (
+            "Radar 60 GHz. Liên kết: {u1} hoặc {u2} {u0}."
+        )
+        cleaned = cleanup_vietnamese_typography(translated)
+        restored = restore_links(cleaned, lmap)
+        self.assertIn("https://siliconradar.com/products/single-product/60-ghz-4tx4tr-mimo/", restored)
+        self.assertIn("doi:10.1016/j.critcare.2012.04.013", restored)
+        self.assertIn("[Google Scholar]", restored)
 
     def test_protect_and_restore_glossary(self):
         text = "The Transformer model uses Multi-Head Attention and Backpropagation to optimize the loss function."

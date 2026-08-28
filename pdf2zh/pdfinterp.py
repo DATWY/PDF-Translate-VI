@@ -200,8 +200,11 @@ class PDFPageInterpreterEx(PDFPageInterpreter):
     ############################################################
     def do_SCN(self) -> None:
         """Set color for stroking operations."""
+        stack_before = list(self.argstack)
         try:
-            return super().do_SCN()
+            super().do_SCN()
+            popped = len(stack_before) - len(self.argstack)
+            return stack_before[-popped:] if popped > 0 else []
         except Exception:
             scs = self.scs
             n = scs.ncomponents if scs else 1
@@ -211,8 +214,11 @@ class PDFPageInterpreterEx(PDFPageInterpreter):
 
     def do_scn(self) -> None:
         """Set color for nonstroking operations"""
+        stack_before = list(self.argstack)
         try:
-            return super().do_scn()
+            super().do_scn()
+            popped = len(stack_before) - len(self.argstack)
+            return stack_before[-popped:] if popped > 0 else []
         except Exception:
             ncs = self.ncs
             n = ncs.ncomponents if ncs else 1

@@ -20,7 +20,9 @@ from pdf2zh.text_utils import (
     cleanup_vietnamese_typography,
     dehyphenate_text,
     protect_glossary,
+    protect_links,
     restore_glossary,
+    restore_links,
 )
 from pdf2zh.translator import ENGINES, BaseTranslator
 
@@ -215,7 +217,7 @@ class TranslateConverter(PDFConverterEx):
         all_page_lines = [it for it in sorted_children if isinstance(it, LTLine) and getattr(it, 'linewidth', 0) < 5]
 
         ############################################################
-        for child in sorted_children:
+        for child_idx, child in enumerate(sorted_children):
             if isinstance(child, LTChar):
                 cur_v = False
                 layout = self.layout[ltpage.pageid]
@@ -232,12 +234,16 @@ class TranslateConverter(PDFConverterEx):
                     for l in all_page_lines
                 )
 
+                is_math_font = vflag(child.fontname, child.get_text())
+                is_sub_or_super = (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79)
+                is_pure_symbol = (child.matrix[0] == 0 and child.matrix[3] == 0)
+
                 if (
                     cls == 0
                     or has_bar_line
-                    or (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79)
-                    or vflag(child.fontname, child.get_text())
-                    or (child.matrix[0] == 0 and child.matrix[3] == 0)
+                    or is_sub_or_super
+                    or is_math_font
+                    or is_pure_symbol
                 ):
                     cur_v = True
                 if not cur_v and vstk:
@@ -294,40 +300,84 @@ class TranslateConverter(PDFConverterEx):
 
                         # Robust multi-scenario check: should moving to the next line start a new item?
                         is_new_item = False
-                        if child.x1 < xt.x0:
-                            # 1. Color change or significant font size change
-                            if ch_color != pstk[-1].color or abs(child.size - pstk[-1].size) > 1.5:
+                        is_line_wrap = (xt is not None) and (child.x1 < xt.x0 or (child.y0 > xt.y0 + pstk[-1].size * 1.8) or (child.x0 - xt.x1 > 35.0))
+
+                        if is_line_wrap:
+                            # Extract next line preview for intelligent boundary detection
+                            fwd_chars = []
+                            for fwd in sorted_children[child_idx : child_idx + 35]:
+                                if isinstance(fwd, LTChar):
+                                    fwd_chars.append(fwd.get_text())
+                            next_prefix = "".join(fwd_chars)
+                            next_prefix_stripped = next_prefix.strip()
+
+                            # 1. Column Jump: cursor jumped upward to top of a new column or horizontally far to the right
+                            if child.y0 > xt.y0 + pstk[-1].size * 1.8 or child.x0 - xt.x1 > 35.0:
                                 is_new_item = True
-                            # 2. Significant vertical paragraph gap (extra blank line > 1.55x)
-                            elif abs(child.y0 - xt.y0) > pstk[-1].size * 1.55:
+                            # 2. Previous line ended with a standalone Page Number (TOC Entry Boundary)
+                            elif prev_text and re.search(r"\s+(\d{1,4}|[ivxlcdm]{1,6})\s*$", prev_text, re.IGNORECASE):
                                 is_new_item = True
-                            # 3. Paragraph indent: line starts noticeably to the right of paragraph left margin (>= 5pt indent)
-                            # and previous text ended with a sentence terminator
-                            elif child.x0 >= pstk[-1].x0 + 5.0 and (
-                                prev_text.endswith('.') or prev_text.endswith(':') or prev_text.endswith('"') or 
-                                prev_text.endswith('”') or prev_text.endswith(')') or prev_text.endswith('!') or 
-                                prev_text.endswith('?') or re.search(r'(\.|\))\d+\s*$', prev_text) is not None
+                            # 3. Next line starts with Section / Subsection index (e.g. '4.1 ', '4.2 ', '0.1 ', '1.2.3 ', 'A.1 ')
+                            elif re.match(r"^\s*(\d+|[A-Z])(\.\d+)+\s+", next_prefix):
+                                is_new_item = True
+                            # 4. Next line starts with Numbered Item / Reference / Roman numeral
+                            elif re.match(r"^\s*(\d{1,4}\.|\[\d{1,4}\]|\(\d{1,4}\))\s+", next_prefix):
+                                if (
+                                    not prev_text
+                                    or prev_text.endswith(('.', ':', '"', '”', ')', '!', '?', ']'))
+                                    or re.search(r"\b\d{1,4}\.?\s*$", prev_text)
+                                    or re.search(r"\[(CrossRef|PubMed|Google\s+Scholar|IEEE|arXiv)\]\s*$", prev_text, re.IGNORECASE)
+                                ):
+                                    is_new_item = True
+                            # 5. Next line starts with special TOC / Section keywords
+                            elif re.match(
+                                r"^\s*(Summary|Tóm tắt|Index|Appendix|Phụ lục|Preface|Lời nói đầu|Acknowledgments|Lời cảm ơn|Contents|Mục lục|PART\s+[IVXLCDM\d]+|CHAPTER\s+\d+|CHƯƠNG\s+\d+)\b",
+                                next_prefix,
+                                re.IGNORECASE,
                             ):
                                 is_new_item = True
-                            # 4. Explicit dot leaders in TOC lines
+                            # 6. Bullet symbols
+                            elif ch_text in ['▶', '►', '•', '▪', '■', '◆', '◇', '★', '-']:
+                                is_new_item = True
+                            # 7. Explicit dot leaders in TOC lines
                             elif re.search(r'(\.\s*){3,}|\.{3,}', prev_text) is not None:
                                 is_new_item = True
-                            # 5. Explicit bullet symbols
-                            elif ch_text in ['▶', '•', '▪', '■']:
+                            # 8. Significant vertical paragraph gap (extra blank line > 1.55x)
+                            elif abs(child.y0 - xt.y0) > pstk[-1].size * 1.55:
                                 is_new_item = True
+                            # 9. Paragraph indent (>= 5pt indent) after sentence terminator
+                            elif child.x0 >= pstk[-1].x0 + 5.0 and (
+                                prev_text.endswith(('.', ':', '"', '”', ')', '!', '?')) or re.search(r'(\.|\))\d+\s*$', prev_text) is not None
+                            ):
+                                is_new_item = True
+                            # 10. Color change or major font size change (> 2.5pt) AND not mid-sentence continuation
+                            elif (ch_color != pstk[-1].color or abs(child.size - pstk[-1].size) > 2.5):
+                                if prev_text.endswith(('.', ':', '"', '”', ')', '!', '?')) or (next_prefix_stripped and next_prefix_stripped[0].isupper()):
+                                    is_new_item = True
 
                         if is_new_item:
                             sstk.append("")
                             pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False, ch_color))
-                        elif child.x0 > xt.x1 + 1:
+                        elif xt is not None and child.x0 > xt.x1 + 1:
                             sstk[-1] += " "
-                        elif child.x1 < xt.x0:
+                        elif is_line_wrap:
                             sstk[-1] += " "
                             pstk[-1].brk = True
                     else:
-                        sstk.append("")
-                        ch_color = getattr(getattr(child, 'graphicstate', None), 'ncolor', None)
-                        pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False, ch_color))
+                        # Only create new paragraph if child is meaningful content
+                        prev_text = sstk[-1].strip() if sstk else ""
+                        ch_text = child.get_text()
+                        if sstk and sstk[-1] == "":
+                            # Reuse empty slot
+                            pstk[-1].x0 = child.x0
+                            pstk[-1].y0 = child.y0
+                            pstk[-1].x1 = child.x1
+                            pstk[-1].y1 = child.y1
+                            pstk[-1].size = child.size
+                        else:
+                            sstk.append("")
+                            ch_color = getattr(getattr(child, 'graphicstate', None), 'ncolor', None)
+                            pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False, ch_color))
                 if not cur_v:
                     if child.get_text() != " ":
                         pstk[-1]._size_sum += child.size
@@ -420,7 +470,87 @@ class TranslateConverter(PDFConverterEx):
             var_ref_y.append(ref_y)
             log.debug(f'< {l:.1f} {min_x:.1f} {ref_y:.1f} len={len(v)} lines={len(varl[id])} > v{id} = {"".join([ch.get_text() for ch in v])}')
 
-        ############################################################
+        # 1. Unpack false single-letter formulas (e.g. initial drop caps 'S', 'w', etc. trapped in formula bounding boxes)
+        for vid, v in enumerate(var):
+            if len(v) == 1 and not varl[vid]:
+                vch = v[0]
+                ch_txt = vch.get_text()
+                if ch_txt.isalpha() and not vflag(vch.fontname, ch_txt):
+                    # Replace {v{vid}} with character text in sstk
+                    tag = f"{{v{vid}}}"
+                    for s_idx in range(len(sstk)):
+                        if tag in sstk[s_idx]:
+                            sstk[s_idx] = sstk[s_idx].replace(tag, ch_txt)
+                    var[vid] = []
+
+        # 2. Forward pass: merge isolated single-letter dropcaps/prefixes into next segment on same line
+        fwd_sstk: list[str] = []
+        fwd_pstk: list[Paragraph] = []
+        i = 0
+        while i < len(sstk):
+            s = sstk[i].strip()
+            p = pstk[i]
+            if not s:
+                i += 1
+                continue
+
+            if i + 1 < len(sstk) and len(s) <= 2 and s.isalpha():
+                next_s = sstk[i + 1].strip()
+                next_p = pstk[i + 1]
+                is_same_line = (abs(next_p.y - p.y) < max(p.size, next_p.size) * 0.85) or (abs(next_p.y1 - p.y1) < max(p.size, next_p.size) * 0.85)
+                is_adjacent_x = (next_p.x0 - p.x1) <= p.size * 1.5
+                if is_same_line and is_adjacent_x:
+                    sstk[i + 1] = s + next_s
+                    next_p.x0 = min(p.x0, next_p.x0)
+                    next_p.x = next_p.x0
+                    next_p.y = max(p.y, next_p.y)
+                    next_p.y1 = max(p.y1, next_p.y1)
+                    next_p.y0 = min(p.y0, next_p.y0)
+                    i += 1
+                    continue
+
+            fwd_sstk.append(sstk[i])
+            fwd_pstk.append(p)
+            i += 1
+
+        sstk = fwd_sstk
+        pstk = fwd_pstk
+
+        # 3. Backward pass: merge mid-sentence broken paragraphs
+        merged_sstk: list[str] = []
+        merged_pstk: list[Paragraph] = []
+        for s, p in zip(sstk, pstk):
+            s_str = s.strip()
+            if not s_str:
+                continue
+            if not merged_sstk:
+                merged_sstk.append(s)
+                merged_pstk.append(p)
+                continue
+
+            prev_s = merged_sstk[-1].strip()
+            prev_p = merged_pstk[-1]
+
+            prev_ends_punct = bool(re.search(r"[\.\!\?\:\”\"]\s*$", prev_s))
+            curr_starts_lower = bool(s_str[0].islower()) if s_str else False
+            vert_gap = prev_p.y0 - p.y1
+            is_vertically_close = -5.0 <= vert_gap <= prev_p.size * 1.6
+            is_same_column = abs(prev_p.x0 - p.x0) < 50.0
+
+            if not prev_ends_punct and is_vertically_close and is_same_column and (curr_starts_lower or vert_gap <= prev_p.size * 1.2):
+                merged_sstk[-1] = prev_s + " " + s_str
+                prev_p.y0 = min(prev_p.y0, p.y0)
+                prev_p.x0 = min(prev_p.x0, p.x0)
+                prev_p.x1 = max(prev_p.x1, p.x1)
+                prev_p.brk = True
+                continue
+
+            merged_sstk.append(s)
+            merged_pstk.append(p)
+
+        sstk = merged_sstk
+        pstk = merged_pstk
+
         log.debug("\n==========[SSTACK]==========\n")
 
         # Compute weighted-average font size for each paragraph
@@ -442,26 +572,33 @@ class TranslateConverter(PDFConverterEx):
             re.IGNORECASE,
         )
         toc_info: list[tuple[str, str] | None] = []
-        prepared: list[tuple[str, dict[str, str]]] = []
+        prepared: list[tuple[str, dict[str, str], dict[str, str]]] = []
         for s in sstk:
             if not s.strip() or re.match(r"^\{v\d+\}$", s):
-                prepared.append((s, {}))
+                prepared.append((s, {}, {}))
                 toc_info.append(None)
             else:
                 s_clean = dehyphenate_text(s)
                 m = TOC_LINE_RE.match(s_clean)
-                if not m and re.match(r"^\s*\d+(\.\d+)*\s+", s_clean):
-                    m = TOC_FALLBACK_RE.match(s_clean)
+                if not m and re.search(r"\s+(\d{1,4}|[ivxlcdm]{1,6})\s*$", s_clean, re.IGNORECASE):
+                    if (
+                        re.match(r"^\s*(\d+|[A-Z])(\.\d+)*\s+", s_clean)
+                        or re.match(r"^\s*(Summary|Tóm tắt|Index|Appendix|Phụ lục|Preface|Lời nói đầu|Acknowledgments|Lời cảm ơn|Contents|Mục lục|PART|CHAPTER|CHƯƠNG)\b", s_clean, re.IGNORECASE)
+                        or len(s_clean) < 140
+                    ):
+                        m = TOC_FALLBACK_RE.match(s_clean)
                 if m and len(m.group(1).strip()) > 1:
                     title_part = m.group(1).strip()
                     num_part = m.group(2).strip()
                     toc_info.append((title_part, num_part))
-                    s_protected, g_map = protect_glossary(title_part, self.glossary_terms)
-                    prepared.append((s_protected, g_map))
+                    s_links_prot, l_map = protect_links(title_part)
+                    s_protected, g_map = protect_glossary(s_links_prot, self.glossary_terms)
+                    prepared.append((s_protected, g_map, l_map))
                 else:
                     toc_info.append(None)
-                    s_protected, g_map = protect_glossary(s_clean, self.glossary_terms)
-                    prepared.append((s_protected, g_map))
+                    s_links_prot, l_map = protect_links(s_clean)
+                    s_protected, g_map = protect_glossary(s_links_prot, self.glossary_terms)
+                    prepared.append((s_protected, g_map, l_map))
 
         prepared_texts = [p[0] for p in prepared]
 
@@ -480,12 +617,17 @@ class TranslateConverter(PDFConverterEx):
             except Exception as e:
                 log.debug("Batch worker error (%s), fallback to item-by-item", e)
                 fallback_res: list[str] = []
-                for s in chunk:
+                
+                def _translate_item(s: str) -> str:
                     try:
-                        fallback_res.append(self.translator.translate(s))
+                        return self.translator.translate(s)
                     except Exception:
                         self.translation_failures.append(s)
-                        fallback_res.append(s)
+                        return s
+                        
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(16, len(chunk))) as p:
+                    fallback_res = list(p.map(_translate_item, chunk))
+                    
                 return fallback_res
 
         # Use class-level persistent executor to avoid create/destroy overhead per page
@@ -499,14 +641,16 @@ class TranslateConverter(PDFConverterEx):
 
         flat_translated = [item for sublist in batch_results for item in sublist]
 
-        # Post-process: restore glossary and clean typography
+        # Post-process: restore glossary, clean typography, and restore links
         news: list[str] = []
         is_vi = self.translator.lang_out.lower() == "vi"
-        for idx, (translated_text, (_, g_map)) in enumerate(zip(flat_translated, prepared)):
+        for idx, (translated_text, (_, g_map, l_map)) in enumerate(zip(flat_translated, prepared)):
             if g_map:
                 translated_text = restore_glossary(translated_text, g_map)
             if is_vi and translated_text.strip() and not re.match(r"^\{v\d+\}$", translated_text):
                 translated_text = cleanup_vietnamese_typography(translated_text)
+            if l_map:
+                translated_text = restore_links(translated_text, l_map)
             news.append(translated_text)
 
         ############################################################
@@ -596,6 +740,15 @@ class TranslateConverter(PDFConverterEx):
             size: float = pstk[id].size
             brk: bool = pstk[id].brk
 
+            col_x1 = x1
+            if toc_info[id] is not None:
+                pw = ltpage.width if hasattr(ltpage, 'width') and ltpage.width > 0 else 612.0
+                if x0 < pw * 0.45:
+                    col_x1 = max(x1, pw * 0.47)
+                else:
+                    col_x1 = max(x1, pw * 0.92)
+                x1 = col_x1
+
             # Auto-scale font size if translation is longer than original.
             # Applied to ALL paragraphs (both single-line and multi-line)
             # to prevent text overflow and overlapping.
@@ -635,7 +788,7 @@ class TranslateConverter(PDFConverterEx):
                             tmp_ptr += 1
                     if total_avail > 0 and total_new_width > total_avail * 1.02:
                         ratio = total_avail / max(0.1, total_new_width)
-                        size = pstk[id].size * max(ratio, 0.55)  # don't go below 55%
+                        size = pstk[id].size * min(1.0, max(ratio, 0.78))
 
             # Pre-compute word-boundary line breaks to avoid mid-word splits
             if brk:
@@ -688,50 +841,6 @@ class TranslateConverter(PDFConverterEx):
                 # Replace spaces at break positions with newlines (process in reverse)
                 for bp in sorted(break_positions, reverse=True):
                     new = new[:bp - 1] + '\n' + new[bp:]
-
-            # If this is a TOC/List-of-Figures entry, attach dot leaders and page number to the last line!
-            if toc_info[id] is not None:
-                _, page_num = toc_info[id]
-                lines = new.split('\n')
-                last_line = lines[-1]
-
-                def _measure_text_width(st: str) -> float:
-                    w = 0.0
-                    p = 0
-                    while p < len(st):
-                        vm = re.match(r"\{\s*v([\d\s]+)\}", st[p:], re.IGNORECASE)
-                        if vm:
-                            try:
-                                vid_t = int(vm.group(1).replace(" ", ""))
-                                w += vlen[vid_t]
-                            except Exception:
-                                pass
-                            p += len(vm.group(0))
-                        else:
-                            ch = st[p]
-                            try:
-                                if self.fontmap.get("tiro") and self.fontmap["tiro"].to_unichr(ord(ch)) == ch:
-                                    w += self.fontmap["tiro"].char_width(ord(ch)) * size
-                                else:
-                                    w += self.noto.char_lengths(ch, size)[0]
-                            except Exception:
-                                w += size * 0.5
-                            p += 1
-                    return w
-
-                orig_had_dots = bool(re.search(r"(\.\s*){2,}|\.{2,}", sstk[id]))
-                last_line_w = _measure_text_width(last_line)
-                num_w = _measure_text_width(page_num)
-                dot_w = _measure_text_width(". ")
-                space_w = _measure_text_width(" ")
-                line_w = x1 - x0
-                gap = line_w - last_line_w - num_w - space_w * 2
-                if orig_had_dots and dot_w > 0 and gap >= dot_w * 2:
-                    num_dots = int(gap / dot_w)
-                    lines[-1] = f"{last_line} {'. ' * num_dots} {page_num}"
-                else:
-                    lines[-1] = f"{last_line}  {page_num}"
-                new = '\n'.join(lines)
 
             cstk: str = ""
             fcur: str = None
@@ -902,6 +1011,40 @@ class TranslateConverter(PDFConverterEx):
                     "lidx": lidx
                 })
 
+            # If this is a TOC/List-of-Figures entry, place dot leaders and page number directly!
+            if toc_info[id] is not None:
+                _, page_num = toc_info[id]
+                num_rtxt = raw_string(self.noto_name, page_num)
+                num_w = sum(self.noto.char_lengths(c, size)[0] for c in page_num)
+                page_x = col_x1 - num_w
+                orig_had_dots = bool(re.search(r"(\.\s*){2,}|\.{2,}", sstk[id]))
+                if orig_had_dots and page_x > x + 15.0:
+                    dot_w = sum(self.noto.char_lengths(c, size)[0] for c in ". ")
+                    if dot_w > 0:
+                        num_dots = int((page_x - x - 8.0) / dot_w)
+                        if num_dots > 0:
+                            dots_str = ". " * num_dots
+                            ops_vals.append({
+                                "type": OpType.TEXT,
+                                "font": self.noto_name,
+                                "size": size,
+                                "x": x + 4.0,
+                                "dy": 0,
+                                "rtxt": raw_string(self.noto_name, dots_str),
+                                "lidx": lidx,
+                                "color": getattr(pstk[id], 'color', None),
+                            })
+                ops_vals.append({
+                    "type": OpType.TEXT,
+                    "font": self.noto_name,
+                    "size": size,
+                    "x": page_x,
+                    "dy": 0,
+                    "rtxt": num_rtxt,
+                    "lidx": lidx,
+                    "color": getattr(pstk[id], 'color', None),
+                })
+
             # An inline formula keeps the vertical offsets it had in the source,
             # so a fraction reaches far below its baseline while the prose around
             # it does not. Uniform leading therefore let the next line print
@@ -928,14 +1071,14 @@ class TranslateConverter(PDFConverterEx):
             # room to this loop drops the leading for every line in the
             # paragraph, until they collide with each other instead.
             effective_line = line_height + (accent_pad / size if size > 0 else 0)
-            while (lidx + 1) * size * effective_line > height and line_height >= 0.8:
-                line_height -= 0.05
+            while (lidx + 1) * size * effective_line > height and line_height >= 0.75:
+                line_height -= 0.04
                 effective_line = line_height + (accent_pad / size if size > 0 else 0)
 
-            # If still overflowing after reducing line_height, shrink font to fit
+            # If still overflowing after reducing line_height, shrink font slightly (never below 78%)
             if lidx > 0 and (lidx + 1) * size * effective_line > height:
                 shrink = height / ((lidx + 1) * size * effective_line)
-                shrink = max(shrink, 0.55)  # Don't go below 55%
+                shrink = max(shrink, 0.78)  # Keep font size legible and consistent (at least 78%)
                 size *= shrink
                 accent_pad *= shrink
                 for vals in ops_vals:

@@ -193,8 +193,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.mono_font = MONO_FONT if has_fonts else FALLBACK_MONO_FONT
 
         self.title("VI Translate — Dịch PDF Giữ Nguyên Bố Cục")
-        self.geometry("720x750")
-        self.minsize(620, 650)
+        self.geometry("760x780")
+        self.minsize(640, 680)
+        
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
 
         self.config = self._load_config()
 
@@ -227,7 +230,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "auto_open": True,
             "custom_output_dir": "",
             "glossary": "Transformer, Attention, Deep Learning, API, Machine Learning, Loss function",
-            "theme": "system",
+            "theme": "dark",
         }
         try:
             if CONFIG_FILE.is_file():
@@ -295,8 +298,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         tab.grid_rowconfigure(3, weight=1)
 
         # Dropzone
-        self.dropzone = ctk.CTkFrame(tab, corner_radius=12, border_width=2, height=125)
-        self.dropzone.grid(row=0, column=0, padx=8, pady=(4, 8), sticky="ew")
+        self.dropzone = ctk.CTkFrame(tab, corner_radius=16, border_width=3, border_color="#3fb950", height=160, fg_color="#1c1f24")
+        self.dropzone.grid(row=0, column=0, padx=12, pady=(8, 12), sticky="ew")
         self.dropzone.grid_propagate(False)
         self.dropzone.grid_columnconfigure(0, weight=1)
         self.dropzone.grid_rowconfigure(0, weight=1)
@@ -305,21 +308,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(
             self.dropzone,
             text="📄 Kéo thả file PDF hoặc thư mục vào đây",
-            font=ctk.CTkFont(self.ui_font, size=14, weight="bold"),
-        ).grid(row=0, column=0, pady=(12, 2), sticky="s")
+            font=ctk.CTkFont(self.ui_font, size=18, weight="bold"),
+            text_color="#c9d1d9"
+        ).grid(row=0, column=0, pady=(20, 4), sticky="s")
 
         buttons = ctk.CTkFrame(self.dropzone, fg_color="transparent")
-        buttons.grid(row=1, column=0, pady=(2, 12))
+        buttons.grid(row=1, column=0, pady=(8, 20))
         ctk.CTkButton(
-            buttons, text="📂 Chọn file PDF", width=135, command=self._pick_files,
-            font=ctk.CTkFont(self.ui_font, size=12, weight="bold"),
-        ).pack(side="left", padx=6)
+            buttons, text="📂 Chọn file PDF", width=140, height=36, command=self._pick_files,
+            font=ctk.CTkFont(self.ui_font, size=13, weight="bold"),
+            fg_color="#238636", hover_color="#2ea043"
+        ).pack(side="left", padx=8)
         ctk.CTkButton(
-            buttons, text="📁 Chọn thư mục", width=135, command=self._pick_directory,
-            font=ctk.CTkFont(self.ui_font, size=12),
-            fg_color=("gray75", "gray30"),
-            text_color=("black", "white"),
-        ).pack(side="left", padx=6)
+            buttons, text="📁 Chọn thư mục", width=140, height=36, command=self._pick_directory,
+            font=ctk.CTkFont(self.ui_font, size=13, weight="bold"),
+            fg_color="#21262d", hover_color="#30363d",
+            border_width=1, border_color="#30363d",
+            text_color="#c9d1d9",
+        ).pack(side="left", padx=8)
 
         # Controls Row 1
         ctrl1 = ctk.CTkFrame(tab, fg_color="transparent")
@@ -836,14 +842,28 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             elif event[0] == "page":
                 _, path, done, total = event
                 if self.states.get(path) == "running" and total:
+                    total_pages = max(1, total // 2)
+                    is_phase_1 = done <= total_pages
+                    
+                    phase_name = "Quét AI" if is_phase_1 else "Dịch PDF"
+                    current_page = done if is_phase_1 else (done - total_pages)
+                    current_page = min(current_page, total_pages)
+                    
                     percent = int((done / total) * 100)
+                    
                     lbl = self.row_labels.get(path)
                     if lbl:
                         lbl.configure(
-                            text=f"{STATUS_MARKS['running']}  {path.name}   —   Trang {done}/{total} ({percent}%)"
+                            text=f"{STATUS_MARKS['running']}  {path.name}  ➔  [{phase_name}] Trang {current_page}/{total_pages} ({percent}%)"
                         )
 
                     overall_frac = (self.batch_done + done / total) / max(self.batch_total, 1)
+                    
+                    if is_phase_1:
+                        self.progress_bar.configure(progress_color=("#d29922", "#e3b341"))
+                    else:
+                        self.progress_bar.configure(progress_color=("#1a7f37", "#3fb950"))
+                        
                     self.progress_bar.set(overall_frac)
 
                     # Calculate ETA
@@ -854,9 +874,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                     remaining_pages = max(0, total_pages_est - pages_done)
                     eta_sec = remaining_pages / max(0.1, rate)
 
-                    eta_str = f" • Dự kiến: {format_duration(eta_sec)}" if eta_sec > 5 else ""
+                    eta_str = f" • Xong trong: {format_duration(eta_sec)}" if eta_sec > 5 else ""
                     self.status_lbl.configure(
-                        text=f"⏳ Đang dịch: {path.name} — Trang {done}/{total} ({percent}%){eta_str}"
+                        text=f"⏳ Đang chạy: {path.name} — [{phase_name}] Trang {current_page}/{total_pages} ({percent}%){eta_str}"
                     )
                     self.title(f"({int(overall_frac * 100)}%) VI Translate")
 
@@ -908,7 +928,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 def main() -> None:
     ensure_writable_streams()
     use_bundled_assets()
-    ctk.set_appearance_mode("system")
+    ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
     app = App()
     if sys.argv[1:]:
