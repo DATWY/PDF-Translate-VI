@@ -139,8 +139,81 @@ def translate_patch(
     else:
         total_pages = doc_zh.page_count
 
+    # ================================================================
+    # PHASE 1: Pre-compute ALL page layouts (CPU-intensive ONNX inference)
+    # This separates CPU-bound layout detection from I/O-bound translation
+    # ================================================================
+    vcls = ["abandon", "figure", "table", "isolate_formula", "formula_caption"]
+    pre_layouts = {}
+    pre_scanned = set()
+    pre_preservations = {}
+
+    # Collect all page objects from pdfminer
+    all_pages_enum = list(enumerate(PDFPage.create_pages(doc)))
+    target_pageids = []
+    for pageno, _page in all_pages_enum:
+        if pages and (pageno not in pages):
+            continue
+        target_pageids.append(pageno)
+
+    logger.info("Phase 1: Pre-computing layouts for %d pages...", len(target_pageids))
+    for pageno in target_pageids:
+        if cancellation_event and cancellation_event.is_set():
+            raise CancelledError("task cancelled")
+
+        page_rect = doc_zh[pageno].rect
+        page_area = page_rect.width * page_rect.height
+        page_blocks = doc_zh[pageno].get_text("dict")["blocks"]
+        if is_scanned_page(page_blocks, page_area):
+            pre_scanned.add(pageno)
+
+        pix = doc_zh[pageno].get_pixmap()
+        image = np.frombuffer(pix.samples, np.uint8).reshape(
+            pix.height, pix.width, 3
+        )[:, :, ::-1]
+        target_imgsz = min(max(int(pix.height / 32) * 32, 640), 768)
+        page_layout = model.predict(image, imgsz=target_imgsz)[0]
+        box = np.ones((pix.height, pix.width))
+        h, w = box.shape
+        non_vcls_boxes = [
+            (i, d) for i, d in enumerate(page_layout.boxes)
+            if page_layout.names[int(d.cls)] not in vcls
+        ]
+        for i, d in reversed(non_vcls_boxes):
+            x0, y0, x1, y1 = d.xyxy.squeeze()
+            x0, y0, x1, y1 = (
+                np.clip(int(x0 - 1), 0, w - 1),
+                np.clip(int(h - y1 - 1), 0, h - 1),
+                np.clip(int(x1 + 1), 0, w - 1),
+                np.clip(int(h - y0 + 1), 0, h - 1),
+            )
+            box[y0:y1, x0:x1] = i + 2
+        for i, d in enumerate(page_layout.boxes):
+            if page_layout.names[int(d.cls)] in vcls:
+                x0, y0, x1, y1 = d.xyxy.squeeze()
+                x0, y0, x1, y1 = (
+                    np.clip(int(x0 - 1), 0, w - 1),
+                    np.clip(int(h - y1 - 1), 0, h - 1),
+                    np.clip(int(x1 + 1), 0, w - 1),
+                    np.clip(int(h - y0 + 1), 0, h - 1),
+                )
+                box[y0:y1, x0:x1] = 0
+
+        page_text = doc_zh[pageno].get_text("text")
+        preservation = classify_preserved_page(page_text)
+        pre_layouts[pageno] = box
+        if preservation is not None:
+            pre_preservations[pageno] = preservation
+
+    logger.info("Phase 1 complete: all layouts pre-computed.")
+
+    # ================================================================
+    # PHASE 2: Process pages with pre-computed layouts
+    # PDF parsing + translation with full thread parallelism
+    # ================================================================
+    logger.info("Phase 2: Processing pages with translation...")
     with tqdm.tqdm(total=total_pages) as progress:
-        for pageno, page in enumerate(PDFPage.create_pages(doc)):
+        for pageno, page in all_pages_enum:
             if cancellation_event and cancellation_event.is_set():
                 raise CancelledError("task cancelled")
             if pages and (pageno not in pages):
@@ -149,56 +222,18 @@ def translate_patch(
             if callback:
                 callback(progress)
             page.pageno = pageno
-            page_rect = doc_zh[page.pageno].rect
-            page_area = page_rect.width * page_rect.height
-            page_blocks = doc_zh[page.pageno].get_text("dict")["blocks"]
-            if is_scanned_page(page_blocks, page_area):
-                scanned_pages.add(pageno)
-            pix = doc_zh[page.pageno].get_pixmap()
-            image = np.frombuffer(pix.samples, np.uint8).reshape(
-                pix.height, pix.width, 3
-            )[:, :, ::-1]
-            target_imgsz = min(max(int(pix.height / 32) * 32, 640), 768)
-            page_layout = model.predict(image, imgsz=target_imgsz)[0]
-            box = np.ones((pix.height, pix.width))
-            h, w = box.shape
-            vcls = ["abandon", "figure", "table", "isolate_formula", "formula_caption"]
-            non_vcls_boxes = [
-                (i, d) for i, d in enumerate(page_layout.boxes)
-                if page_layout.names[int(d.cls)] not in vcls
-            ]
-            for i, d in reversed(non_vcls_boxes):
-                x0, y0, x1, y1 = d.xyxy.squeeze()
-                x0, y0, x1, y1 = (
-                    np.clip(int(x0 - 1), 0, w - 1),
-                    np.clip(int(h - y1 - 1), 0, h - 1),
-                    np.clip(int(x1 + 1), 0, w - 1),
-                    np.clip(int(h - y0 + 1), 0, h - 1),
-                )
-                box[y0:y1, x0:x1] = i + 2
-            for i, d in enumerate(page_layout.boxes):
-                if page_layout.names[int(d.cls)] in vcls:
-                    x0, y0, x1, y1 = d.xyxy.squeeze()
-                    x0, y0, x1, y1 = (
-                        np.clip(int(x0 - 1), 0, w - 1),
-                        np.clip(int(h - y1 - 1), 0, h - 1),
-                        np.clip(int(x1 + 1), 0, w - 1),
-                        np.clip(int(h - y0 + 1), 0, h - 1),
-                    )
-                    box[y0:y1, x0:x1] = 0
 
-            page_text = doc_zh[page.pageno].get_text("text")
-            preservation = classify_preserved_page(page_text)
-            if preservation is not None:
+            if pageno in pre_preservations:
+                pres = pre_preservations[pageno]
                 logger.info(
                     "Page %s detected as %s (%s)",
                     pageno + 1,
-                    preservation.kind,
-                    preservation.detail,
+                    pres.kind,
+                    pres.detail,
                 )
 
-            layout[page.pageno] = box
-            if pageno in scanned_pages:
+            layout[page.pageno] = pre_layouts[pageno]
+            if pageno in pre_scanned:
                 device.scanned_pages.add(pageno)
             page.page_xref = doc_zh.get_new_xref()
             doc_zh.update_object(page.page_xref, "<<>>")

@@ -465,9 +465,10 @@ class TranslateConverter(PDFConverterEx):
 
         prepared_texts = [p[0] for p in prepared]
 
-        # Chunk prepared texts to utilize both batching and multi-threading
-        # Each chunk is up to 50 segments to maximize HTTP throughput
-        chunk_size = 50
+        # Chunk prepared texts: small chunks (3) = more parallel batches
+        # With 20 segments per page and chunk_size=3, we get ~7 parallel HTTP batches
+        # instead of 1 single batch with chunk_size=50
+        chunk_size = 3
         chunks = [
             prepared_texts[i : i + chunk_size]
             for i in range(0, len(prepared_texts), chunk_size)
@@ -487,10 +488,14 @@ class TranslateConverter(PDFConverterEx):
                         fallback_res.append(s)
                 return fallback_res
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=max(1, self.thread)
-        ) as executor:
-            batch_results = list(executor.map(batch_worker, chunks))
+        # Use class-level persistent executor to avoid create/destroy overhead per page
+        if not hasattr(TranslateConverter, '_shared_executor') or TranslateConverter._shared_executor is None:
+            TranslateConverter._shared_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, self.thread)
+            )
+        executor = TranslateConverter._shared_executor
+        batch_futures = [executor.submit(batch_worker, c) for c in chunks]
+        batch_results = [f.result() for f in batch_futures]
 
         flat_translated = [item for sublist in batch_results for item in sublist]
 

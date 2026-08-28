@@ -181,13 +181,14 @@ class GoogleTranslator(BaseTranslator):
         return remove_control_characters(html.unescape(match.group(1)))
 
     def do_translate_batch(self, texts: list[str]) -> list[str]:
-        """Group multiple texts into chunks (< 3500 chars) and translate in single HTTP requests."""
+        """Group multiple texts into chunks (< 4800 chars) and translate in parallel HTTP requests."""
+        import concurrent.futures
+
         if not texts:
             return []
         if len(texts) == 1:
             return [self.do_translate(texts[0])]
 
-        results: list[str] = []
         chunks: list[list[str]] = []
         current_chunk: list[str] = []
         current_len = 0
@@ -205,30 +206,36 @@ class GoogleTranslator(BaseTranslator):
         if current_chunk:
             chunks.append(current_chunk)
 
-        for chunk in chunks:
+        def _translate_chunk(chunk: list[str]) -> list[str]:
             if len(chunk) == 1:
-                results.append(self.do_translate(chunk[0]))
-                continue
-
+                return [self.do_translate(chunk[0])]
             combined = self.DELIMITER.join(chunk)
             try:
                 translated_combined = self.do_translate(combined)
                 parts = self.DELIMITER_REGEX.split(translated_combined)
                 if len(parts) == len(chunk):
-                    results.extend(parts)
+                    return parts
                 else:
                     logger.debug(
                         "Batch split length mismatch (%d vs %d), falling back to individual translation",
                         len(parts),
                         len(chunk),
                     )
-                    for t in chunk:
-                        results.append(self.do_translate(t))
+                    return [self.do_translate(t) for t in chunk]
             except Exception as e:
                 logger.debug("Batch translation failed (%s), falling back to individual translation", e)
-                for t in chunk:
-                    results.append(self.do_translate(t))
+                return [self.do_translate(t) for t in chunk]
 
+        # Process ALL sub-chunks in PARALLEL instead of sequentially
+        if len(chunks) == 1:
+            return _translate_chunk(chunks[0])
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+            chunk_results = list(pool.map(_translate_chunk, chunks))
+
+        results: list[str] = []
+        for cr in chunk_results:
+            results.extend(cr)
         return results
 
 

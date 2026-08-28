@@ -102,6 +102,11 @@ class OnnxModel(DocLayoutModel):
         sess_options.graph_optimization_level = (
             onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
         )
+        # Maximize CPU utilization for layout detection
+        cpu_count = os.cpu_count() or 4
+        sess_options.intra_op_num_threads = cpu_count
+        sess_options.inter_op_num_threads = max(1, cpu_count // 2)
+        sess_options.execution_mode = onnxruntime.ExecutionMode.ORT_PARALLEL
 
         if _preferred_backend and _preferred_backend in _BACKEND_PROVIDERS:
             providers = _BACKEND_PROVIDERS[_preferred_backend]
