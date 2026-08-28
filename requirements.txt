@@ -1,0 +1,17 @@
+babeldoc>=0.2.33
+fonttools>=4.50.0
+numpy>=1.26.0
+pdfminer-six>=20240706
+pikepdf>=8.0.0
+pymupdf>=1.24.0
+requests>=2.31.0
+tenacity>=8.2.0
+tqdm>=4.66.0
+
+# Imported directly by the bundled core but previously reached only through
+# babeldoc, so nothing pinned them. Not the headless opencv build: babeldoc
+# requires the full package, and installing both just shadows one with the other.
+onnx>=1.15.0
+onnxruntime>=1.17.0
+opencv-python>=4.9.0.80
+peewee>=3.17.0

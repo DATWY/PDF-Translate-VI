@@ -1,0 +1,44 @@
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Build & packaging artifacts
+build/
+dist/
+dist_*/
+*.spec.bak
+
+# Large model assets & fonts (downloaded via scripts/fetch_assets.py)
+app/assets/*.onnx
+app/assets/*.ttf
+app/assets/*.optimized
+
+# Temporary output and test folders
+output/
+tmp/
+scratch/
+test_*/
+*.pdf
+*.png
+*.jpg
+!app/assets/*.png
+!app/assets/*.jpg
+!app/assets/*.ico
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
