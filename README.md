@@ -5,20 +5,47 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Version-2.0.0-blue.svg" alt="Version 2.0.0">
   <img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue" alt="Python Versions">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Google%20Colab-green" alt="Platforms">
   <img src="https://img.shields.io/badge/Threads-Up%20to%20256-orange" alt="Threads">
+  <img src="https://img.shields.io/badge/Tests-84%20Passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-lightgrey" alt="License">
 </p>
 
 ---
 
-## 🚀 Điểm nổi bật & Tính năng nâng cấp mới nhất
+## 📸 Giao diện Ứng dụng & Kết quả Thực tế
 
-- 📐 **Bảo toàn công thức toán học đỉnh cao:** Giữ nguyên vẹn mọi công thức LaTeX phức tạp, phân số lồng nhau, số mũ, chỉ số dưới, ký tự Hy Lạp ($\lambda, \mu, \Delta, \xi, \dots$) và các biến số có gạch đầu ($\bar{n}_1, d\bar{n}_1/d\lambda$).
+### 1. Giao diện Dịch thuật Kéo thả & Tiến độ Thời gian thực
+Giao diện trực quan, hỗ trợ kéo thả nhiều file/thư mục, hiển thị phần trăm hoàn thành, trang đang dịch và ước tính thời gian còn lại (ETA):
+
+<p align="center">
+  <img src="docs/images/app_main.png" alt="Giao diện chính VI-Translate" width="95%">
+</p>
+
+### 2. Tab Cài đặt & Thuật ngữ Chuyên ngành Bảo tồn (Custom Glossary)
+Bảo tồn chính xác các thuật ngữ công nghệ/y khoa không cần dịch, tùy chỉnh số luồng song song lên tới 256 luồng và hỗ trợ tăng tốc phần cứng GPU (DirectML):
+
+<p align="center">
+  <img src="docs/images/app_settings.png" alt="Cài đặt và Thuật ngữ chuyên ngành" width="85%">
+</p>
+
+### 3. Kết quả Dịch Thực tế (Bảo toàn 100% Công thức Toán học & Biểu đồ)
+Minh chứng thực tế dịch trang giáo trình kỹ thuật bán dẫn (Semiconductors): bảo toàn nguyên vẹn phân số, ma trận, căn bậc hai, chỉ số trên/dưới, đồ thị và căn chỉnh chuẩn xuất bản:
+
+<p align="center">
+  <img src="docs/images/translation_demo.png" alt="Kết quả dịch thực tế bảo toàn công thức" width="90%">
+</p>
+
+---
+
+## 🚀 Điểm nổi bật & Tính năng nâng cấp phiên bản 2.0.0
+
+- 📐 **Bảo toàn công thức toán học đỉnh cao:** Giữ nguyên vẹn mọi công thức LaTeX phức tạp, phân số lồng nhau, ma trận, số mũ, chỉ số dưới, căn bậc hai $\sqrt{E}$, ký tự Hy Lạp ($\lambda, \mu, \Delta, \xi, \dots$) và các biến số có gạch đầu ($\bar{n}_1, d\bar{n}_1/d\lambda$).
 - ⚡ **Tốc độ siêu tốc (Mở khóa tới 256 luồng):** Tối ưu hóa HTTP Connection Pool (`urllib3/requests`) xử lý đồng thời hàng trăm trang tài liệu trong vài chục giây.
 - 🎯 **Trí tuệ nhân tạo nhận diện bố cục (`DocLayout-YOLO`):** Tự động phát hiện và phân vùng chính xác văn bản, hình vẽ, bảng biểu, chú thích hình và tiêu đề.
-- 🔤 **Tự động xử lý font chữ & typography tiếng Việt:** Tích hợp font Unicode cao cấp (*BeVietnamPro* & *GoNotoKurrent*), tự động chống lỗi mất dấu, chống rách chữ và sửa lỗi màu chữ trắng trên nền trắng.
+- 🔤 **Tự động xử lý font chữ & typography tiếng Việt:** Tích hợp font Unicode cao cấp (*BeVietnamPro* & *GoNotoKurrent*), tự động chống lỗi mất dấu, chống rách chữ, tự động hàn gắn chữ cái đầu dòng (`Since` $\to$ `Vì`, `where` $\to$ `trong đó`) và giữ cỡ chữ đồng đều toàn trang.
 - 📄 **Tùy chọn trang linh hoạt:** Cho phép dịch toàn bộ tài liệu hoặc chọn dải trang tùy ý (ví dụ: `1-50, 75, 100-120`).
 - ☁️ **Chạy đa nền tảng:** Hỗ trợ Windows Desktop App (file `.exe` chạy ngay không cần cài Python), Linux, macOS và **Google Colab**.
 
@@ -105,13 +132,13 @@ Nếu bạn sửa đổi mã nguồn và muốn đóng gói lại thành file `.
 # Chạy script đóng gói tự động trên PowerShell:
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
-*Kết quả đóng gói sẽ nằm trong thư mục `dist_v4/` kèm file nén `PDFTranslate-windows.zip`.*
+*Kết quả đóng gói sẽ nằm trong thư mục `dist_v19/` kèm file nén `PDFTranslate-windows.zip`.*
 
 ---
 
 ## 📋 Kiểm thử tự động (Unit Tests)
 
-Dự án đi kèm bộ 68 bài kiểm thử tự động bao quát toàn bộ tính năng xử lý công thức, font chữ, độ phân giải bảng biểu và kiểm soát luồng:
+Dự án đi kèm bộ 84 bài kiểm thử tự động bao quát toàn bộ tính năng xử lý công thức, font chữ, độ phân giải bảng biểu, xử lý TOC và kiểm soát luồng:
 
 ```bash
 python -m unittest discover tests
@@ -123,3 +150,4 @@ python -m unittest discover tests
 
 Dự án được phân phối theo giấy phép [AGPL-3.0](LICENSE).  
 Phát triển và nâng cấp dựa trên nền tảng [PDFMathTranslate](https://github.com/Byaidu/PDFMathTranslate) & [BabelDOC](https://github.com/funstory-ai/BabelDOC). Xem chi tiết tại [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+

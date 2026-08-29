@@ -34,6 +34,7 @@ test_*/
 !app/assets/*.png
 !app/assets/*.jpg
 !app/assets/*.ico
+!docs/images/*
 
 # IDE & OS files
 .vscode/
