@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import os
 import re
 import socket
 import threading
@@ -39,12 +40,14 @@ class BaseTranslator:
         model: str | None = None,
         *,
         ignore_cache: bool = False,
+        cancellation_event: Any = None,
         **_: Any,
     ) -> None:
         self.lang_in = self.lang_map.get(lang_in.lower(), lang_in)
         self.lang_out = self.lang_map.get(lang_out.lower(), lang_out)
         self.model = model
         self.ignore_cache = ignore_cache
+        self.cancellation_event = cancellation_event
         self.cache = TranslationCache(
             self.name,
             {
@@ -67,6 +70,8 @@ class BaseTranslator:
 
     def translate_batch(self, texts: list[str], ignore_cache: bool = False) -> list[str]:
         """Translate a batch of text segments, consulting cache and batching where possible."""
+        if self.cancellation_event and self.cancellation_event.is_set():
+            return texts
         results: list[str | None] = [None] * len(texts)
         missing_indices: list[int] = []
         missing_texts: list[str] = []
@@ -207,6 +212,8 @@ class GoogleTranslator(BaseTranslator):
             chunks.append(current_chunk)
 
         def _translate_chunk(chunk: list[str]) -> list[str]:
+            if self.cancellation_event and self.cancellation_event.is_set():
+                return chunk
             if len(chunk) == 1:
                 return [self.do_translate(chunk[0])]
             combined = self.DELIMITER.join(chunk)
@@ -336,6 +343,125 @@ class HandoffTranslator(BaseTranslator):
                 stream.write(json.dumps({"src": text}, ensure_ascii=False) + "\n")
 
 
+class OllamaTranslator(BaseTranslator):
+    """Translate offline using a local LLM via Ollama API."""
+
+    name = "ollama"
+
+    def __init__(
+        self,
+        lang_in: str,
+        lang_out: str,
+        model: str | None = None,
+        *,
+        ignore_cache: bool = False,
+        cancellation_event: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        model_name = model or os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+        super().__init__(
+            lang_in,
+            lang_out,
+            model_name,
+            ignore_cache=ignore_cache,
+            cancellation_event=cancellation_event,
+            **kwargs,
+        )
+        self.host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+        self.endpoint = f"{self.host}/api/generate"
+        self.session = requests.Session()
+
+    def do_translate(self, text: str) -> str:
+        if self.cancellation_event and self.cancellation_event.is_set():
+            return text
+        prompt = (
+            f"You are a professional academic translator. Translate the following text from {self.lang_in} to {self.lang_out}.\n"
+            f"CRITICAL RULES:\n"
+            f"1. Preserve all placeholders like <b0>, </b0>, {{v0}}, {{v1}} exactly as they appear.\n"
+            f"2. Preserve all LaTeX formulas, numbers, and mathematical expressions intact.\n"
+            f"3. Return ONLY the translated text without any explanation, markdown backticks, or intro.\n\n"
+            f"Text to translate:\n{text}"
+        )
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2},
+        }
+        try:
+            resp = self.session.post(self.endpoint, json=payload, timeout=60)
+            resp.raise_for_status()
+            res_json = resp.json()
+            out = res_json.get("response", "").strip()
+            return remove_control_characters(out) if out else text
+        except Exception as e:
+            logger.warning("Ollama translation failed: %s", e)
+            return text
+
+
+class DeepLTranslator(BaseTranslator):
+    """Translate using DeepL API."""
+
+    name = "deepl"
+    lang_map: ClassVar[dict[str, str]] = {
+        "en": "EN-US",
+        "pt": "PT-PT",
+        "zh": "ZH",
+    }
+
+    def __init__(
+        self,
+        lang_in: str,
+        lang_out: str,
+        model: str | None = None,
+        *,
+        ignore_cache: bool = False,
+        cancellation_event: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            lang_in,
+            lang_out,
+            model,
+            ignore_cache=ignore_cache,
+            cancellation_event=cancellation_event,
+            **kwargs,
+        )
+        self.api_key = os.environ.get("DEEPL_AUTH_KEY") or os.environ.get("DEEPL_API_KEY", "")
+        self.endpoint = (
+            "https://api.deepl.com/v2/translate"
+            if self.api_key and not self.api_key.endswith(":fx")
+            else "https://api-free.deepl.com/v2/translate"
+        )
+        self.session = requests.Session()
+
+    def do_translate(self, text: str) -> str:
+        if self.cancellation_event and self.cancellation_event.is_set():
+            return text
+        if not self.api_key:
+            logger.warning("DEEPL_AUTH_KEY not set, returning source text")
+            return text
+        data = {
+            "text": [text],
+            "target_lang": self.lang_out.upper(),
+            "source_lang": self.lang_in.upper() if self.lang_in != "auto" else None,
+            "tag_handling": "xml",
+        }
+        data = {k: v for k, v in data.items() if v is not None}
+        headers = {"Authorization": f"DeepL-Auth-Key {self.api_key}"}
+        try:
+            resp = self.session.post(self.endpoint, headers=headers, data=data, timeout=20)
+            resp.raise_for_status()
+            res_json = resp.json()
+            translations = res_json.get("translations", [])
+            if translations:
+                return remove_control_characters(translations[0].get("text", text))
+            return text
+        except Exception as e:
+            logger.warning("DeepL translation failed: %s", e)
+            return text
+
+
 ENGINES: dict[str, type[BaseTranslator]] = {
-    engine.name: engine for engine in (GoogleTranslator, HandoffTranslator)
+    engine.name: engine for engine in (GoogleTranslator, HandoffTranslator, OllamaTranslator, DeepLTranslator)
 }

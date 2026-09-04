@@ -1,6 +1,8 @@
+import atexit
 import json
 import logging
 import os
+import threading
 from typing import Optional
 
 from peewee import SQL, AutoField, CharField, Model, SqliteDatabase, TextField
@@ -8,6 +10,7 @@ from peewee import SQL, AutoField, CharField, Model, SqliteDatabase, TextField
 # we don't init the database here
 db = SqliteDatabase(None)
 logger = logging.getLogger(__name__)
+_cache_write_lock = threading.Lock()
 
 
 class _TranslationCache(Model):
@@ -95,12 +98,13 @@ class TranslationCache:
 
         # Store in Tier 2 SQLite
         try:
-            _TranslationCache.create(
-                translate_engine=self.translate_engine,
-                translate_engine_params=self.translate_engine_params,
-                original_text=original_text,
-                translation=translation,
-            )
+            with _cache_write_lock:
+                _TranslationCache.create(
+                    translate_engine=self.translate_engine,
+                    translate_engine_params=self.translate_engine_params,
+                    original_text=original_text,
+                    translation=translation,
+                )
         except Exception as e:
             logger.debug(f"Error setting cache: {e}")
 
@@ -122,6 +126,17 @@ def init_db(remove_exists=False):
         },
     )
     db.create_tables([_TranslationCache], safe=True)
+
+
+def close_db():
+    try:
+        active_db = getattr(_TranslationCache._meta, "database", None)
+        if active_db and not active_db.is_closed():
+            active_db.close()
+        if db and not db.is_closed():
+            db.close()
+    except Exception:
+        pass
 
 
 def init_test_db():
@@ -156,3 +171,5 @@ def clean_test_db(test_db):
 
 
 init_db()
+atexit.register(close_db)
+

@@ -19,7 +19,7 @@ BUNDLED_CORE = (SKILL_ROOT / "pdf2zh").resolve()
 if str(SKILL_ROOT) not in sys.path:
     sys.path.insert(0, str(SKILL_ROOT))
 
-CORE_VERSION = "2.0.0"
+CORE_VERSION = "2.1.0"
 RULESET = "code4life-preservation-v1"
 DEFAULT_TARGET_LANGUAGE = "vi"
 
@@ -34,7 +34,7 @@ TARGET_LANGUAGES = frozenset(
     }
 )
 
-ENGINES = ("google", "handoff")
+ENGINES = ("google", "handoff", "ollama", "deepl")
 
 # Measured on an eight-page sample: 2 threads 48s, 4 threads 30s, 8 threads 27s,
 # 12 threads 29s. Past four, the layout pass rather than the network is the floor,
@@ -117,6 +117,17 @@ def _parser() -> argparse.ArgumentParser:
         "--glossary",
         type=str,
         help="Comma-separated list of terms to keep untranslated (e.g. 'Transformer,Attention')",
+    )
+    parser.add_argument(
+        "--export",
+        default="mono",
+        choices=["mono", "dual", "both"],
+        help="Output format: mono (translated only), dual (bilingual side-by-side), or both",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        help="Model name for engine (e.g. 'qwen2.5:7b' for ollama)",
     )
     parser.add_argument("--ignore-cache", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -242,6 +253,8 @@ def _run_engine(
     engine: str,
     envs: dict[str, str],
     on_progress: Callable[[int, int], None] | None = None,
+    export: str = "mono",
+    engine_model: str | None = None,
 ) -> int:
     """Run the core and return how many segments were left untranslated."""
     from pdf2zh.high_level import translate
@@ -264,21 +277,23 @@ def _run_engine(
         def callback(progress: object) -> None:
             on_progress(getattr(progress, "n", 0), getattr(progress, "total", 0) or 0)
 
+    service_param = f"{engine}:{engine_model}" if engine_model else engine
     result = translate(
         files=[str(source)],
         output=str(temp_output),
         pages=_pages_to_indices(pages),
         lang_in=source_language,
         lang_out=target_language,
-        service=engine,
+        service=service_param,
         thread=threads,
         model=model,
         envs=envs,
         callback=callback,
         ignore_cache=ignore_cache,
+        export=export,
     )
-    if len(result) != 1:
-        raise TranslationError("PDF core did not report one translated result")
+    if not result:
+        raise TranslationError("PDF core did not report a translated result")
     return int(result[0][1] or 0)
 
 
@@ -318,6 +333,34 @@ def inspect_pdf(path: Path) -> dict:
         }
 
 
+def _safe_stage_and_replace(src_path: Path, dst_path: Path, destination_dir: Path) -> Path:
+    staged = destination_dir / f".{dst_path.name}.tmp"
+    final_dest = dst_path
+    try:
+        shutil.copyfile(src_path, staged)
+        try:
+            staged.replace(final_dest)
+        except PermissionError:
+            try:
+                final_dest.unlink(missing_ok=True)
+                staged.replace(final_dest)
+            except Exception:
+                counter = 1
+                alt_path = destination_dir / f"{final_dest.stem} ({counter}){final_dest.suffix}"
+                while alt_path.exists():
+                    try:
+                        alt_path.unlink()
+                        break
+                    except Exception:
+                        counter += 1
+                        alt_path = destination_dir / f"{final_dest.stem} ({counter}){final_dest.suffix}"
+                shutil.copyfile(src_path, alt_path)
+                final_dest = alt_path
+    finally:
+        staged.unlink(missing_ok=True)
+    return final_dest
+
+
 def translate_pdf(
     input_pdf: Path,
     output_dir: Path | None,
@@ -329,6 +372,8 @@ def translate_pdf(
     ignore_cache: bool = False,
     overwrite: bool = False,
     engine: str = "google",
+    engine_model: str | None = None,
+    export: str = "mono",
     segments: Path | None = None,
     emit_segments: Path | None = None,
     glossary: list[str] | str | None = None,
@@ -372,6 +417,8 @@ def translate_pdf(
                 engine,
                 envs,
                 on_progress,
+                export=export,
+                engine_model=engine_model,
             )
         except TranslationError:
             raise
@@ -381,41 +428,29 @@ def translate_pdf(
         if destination is None:
             return Translation(None, untranslated)
 
-        generated = temp_output / f"{source.stem}-mono.pdf"
-        if not generated.is_file():
-            candidates = sorted(temp_output.glob("*-mono.pdf"))
-            if len(candidates) != 1:
-                names = ", ".join(path.name for path in temp_output.iterdir()) or "no files"
-                raise TranslationError(f"Engine did not produce one translated PDF; found: {names}")
-            generated = candidates[0]
+        primary_dest = destination
+        if export in ("mono", "both"):
+            generated = temp_output / f"{source.stem}-mono.pdf"
+            if not generated.is_file():
+                candidates = sorted(temp_output.glob("*-mono.pdf"))
+                if candidates:
+                    generated = candidates[0]
+            if generated.is_file():
+                primary_dest = _safe_stage_and_replace(generated, destination, destination_dir)
 
-        staged = destination_dir / f".{destination.name}.tmp"
-        try:
-            shutil.copyfile(generated, staged)
-            try:
-                staged.replace(destination)
-            except PermissionError:
-                # File is currently open/locked in another program (e.g. Acrobat, browser)
-                try:
-                    destination.unlink(missing_ok=True)
-                    staged.replace(destination)
-                except Exception:
-                    # Destination is firmly locked, write to a numbered fallback copy so work is never lost!
-                    counter = 1
-                    alt_path = destination_dir / f"{destination.stem} ({counter}){destination.suffix}"
-                    while alt_path.exists():
-                        try:
-                            alt_path.unlink()
-                            break
-                        except Exception:
-                            counter += 1
-                            alt_path = destination_dir / f"{destination.stem} ({counter}){destination.suffix}"
-                    shutil.copyfile(generated, alt_path)
-                    destination = alt_path
-        finally:
-            staged.unlink(missing_ok=True)
+        if export in ("dual", "both"):
+            generated_dual = temp_output / f"{source.stem}-dual.pdf"
+            if not generated_dual.is_file():
+                candidates_dual = sorted(temp_output.glob("*-dual.pdf"))
+                if candidates_dual:
+                    generated_dual = candidates_dual[0]
+            if generated_dual.is_file():
+                dual_dest = destination_dir / f"{source.stem}-dual.pdf"
+                saved_dual = _safe_stage_and_replace(generated_dual, dual_dest, destination_dir)
+                if export == "dual":
+                    primary_dest = saved_dual
 
-    return Translation(destination, untranslated)
+        return Translation(primary_dest, untranslated)
 
 
 def _use_utf8_output() -> None:
@@ -444,6 +479,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ignore_cache=args.ignore_cache,
             overwrite=args.overwrite,
             engine=args.engine,
+            engine_model=args.model,
+            export=args.export,
             segments=args.segments,
             emit_segments=args.emit_segments,
             glossary=args.glossary,

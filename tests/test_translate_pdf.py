@@ -21,7 +21,7 @@ class TranslatePdfTests(unittest.TestCase):
         self.temp_directory.cleanup()
 
     @staticmethod
-    def _engine_side_effect(source, temp_output, *_args):
+    def _engine_side_effect(source, temp_output, *_args, **_kwargs):
         (Path(temp_output) / f"{Path(source).stem}-mono.pdf").write_bytes(
             b"%PDF-1.7\ntranslated"
         )
@@ -38,7 +38,7 @@ class TranslatePdfTests(unittest.TestCase):
         self.assertEqual(result.untranslated, 0)
         self.assertEqual(result.path.read_bytes(), b"%PDF-1.7\ntranslated")
         run.assert_called_once_with(
-            self.source, mock.ANY, "vi", "auto", None, translate_pdf.DEFAULT_THREADS, False, "google", {}, None
+            self.source, mock.ANY, "vi", "auto", None, translate_pdf.DEFAULT_THREADS, False, "google", {}, None, export="mono", engine_model=None
         )
 
     @mock.patch.object(translate_pdf, "_require_core")
@@ -114,10 +114,11 @@ class TranslatePdfTests(unittest.TestCase):
             envs={"segments_in": "table.jsonl"},
             callback=None,
             ignore_cache=True,
+            export="mono",
         )
 
     def test_reports_segments_the_engine_could_not_translate(self):
-        def partial(source, temp_output, *_args):
+        def partial(source, temp_output, *_args, **_kwargs):
             (Path(temp_output) / f"{Path(source).stem}-mono.pdf").write_bytes(b"%PDF-1.7\n")
             return 7
 

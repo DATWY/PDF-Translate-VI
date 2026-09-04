@@ -111,6 +111,20 @@ STATUS_COLORS = {
     "cancelled": ("#9a6700", "#d29922"),
 }
 
+EXPORT_NAMES = {
+    "mono": "Chỉ tiếng Việt (Đơn ngữ) - Nhanh nhất",
+    "dual": "Song ngữ đối chiếu (Anh - Việt)",
+    "both": "Xuất cả 2 file (Đơn ngữ + Song ngữ)",
+}
+EXPORT_CODES = {v: k for k, v in EXPORT_NAMES.items()}
+
+ENGINE_DISPLAY_NAMES = {
+    "google": "Google Translate (Mặc định - Miễn phí)",
+    "ollama": "Ollama (Offline AI / Riêng tư)",
+    "deepl": "DeepL Translate (Cần API Key)",
+}
+ENGINE_CODES = {v: k for k, v in ENGINE_DISPLAY_NAMES.items()}
+
 
 def ensure_writable_streams() -> None:
     """Give the app real streams, because a windowed build has none."""
@@ -533,6 +547,50 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.threads_lbl.grid(row=3, column=2, padx=(0, 14), sticky="w")
 
+        # Export Format
+        ctk.CTkLabel(
+            p_frame, text="Định dạng xuất file:",
+            font=ctk.CTkFont(self.ui_font, size=12),
+        ).grid(row=4, column=0, padx=14, pady=6, sticky="w")
+
+        cur_export = self.config.get("export_format", "mono")
+        self.export_menu = ctk.CTkOptionMenu(
+            p_frame,
+            values=list(EXPORT_NAMES.values()),
+            font=ctk.CTkFont(self.ui_font, size=12),
+        )
+        self.export_menu.set(EXPORT_NAMES.get(cur_export, EXPORT_NAMES["mono"]))
+        self.export_menu.grid(row=4, column=1, padx=14, pady=6, sticky="ew")
+
+        # Engine Selection
+        ctk.CTkLabel(
+            p_frame, text="Bộ máy dịch thuật:",
+            font=ctk.CTkFont(self.ui_font, size=12),
+        ).grid(row=5, column=0, padx=14, pady=6, sticky="w")
+
+        cur_engine = self.config.get("engine", "google")
+        self.engine_menu = ctk.CTkOptionMenu(
+            p_frame,
+            values=list(ENGINE_DISPLAY_NAMES.values()),
+            font=ctk.CTkFont(self.ui_font, size=12),
+        )
+        self.engine_menu.set(ENGINE_DISPLAY_NAMES.get(cur_engine, ENGINE_DISPLAY_NAMES["google"]))
+        self.engine_menu.grid(row=5, column=1, padx=14, pady=6, sticky="ew")
+
+        # Ollama Model Name
+        ctk.CTkLabel(
+            p_frame, text="Mô hình Ollama (nếu dùng):",
+            font=ctk.CTkFont(self.ui_font, size=12),
+        ).grid(row=6, column=0, padx=14, pady=6, sticky="w")
+
+        self.ollama_model_entry = ctk.CTkEntry(
+            p_frame,
+            placeholder_text="Mặc định: qwen2.5:7b (hoặc llama3.1:8b)",
+            font=ctk.CTkFont(self.ui_font, size=11),
+        )
+        self.ollama_model_entry.insert(0, self.config.get("ollama_model", "qwen2.5:7b"))
+        self.ollama_model_entry.grid(row=6, column=1, padx=14, pady=6, sticky="ew")
+
         # Save Button
         ctk.CTkButton(
             tab, text="💾 Lưu Cài Đặt", width=140, command=self._on_save_settings,
@@ -553,6 +611,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config["auto_open"] = bool(self.auto_open_var.get())
         self.config["custom_output_dir"] = self.out_dir_entry.get().strip()
         self.config["threads"] = int(self.threads_slider.get())
+        self.config["export_format"] = EXPORT_CODES.get(self.export_menu.get(), "mono")
+        self.config["engine"] = ENGINE_CODES.get(self.engine_menu.get(), "google")
+        self.config["ollama_model"] = self.ollama_model_entry.get().strip() or "qwen2.5:7b"
         self._save_config()
         self.status_lbl.configure(text="✅ Đã lưu cài đặt thành công!")
         self.tabview.set("🚀 Dịch tài liệu")
@@ -706,6 +767,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         threads = int(self.threads_slider.get())
         glossary_raw = self.glossary_text.get("1.0", "end").strip()
         custom_out = self.out_dir_entry.get().strip() or None
+        export_mode = self.config.get("export_format", "mono")
+        engine = self.config.get("engine", "google")
+        engine_model = self.config.get("ollama_model", "qwen2.5:7b")
 
         self.cancel_event.clear()
         self.btn_start.configure(state="disabled", text="Đang dịch…")
@@ -716,7 +780,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.worker = threading.Thread(
             target=self._run,
-            args=(pending, language, overwrite, pages_input, threads, glossary_raw, custom_out),
+            args=(pending, language, overwrite, pages_input, threads, glossary_raw, custom_out, export_mode, engine, engine_model),
             daemon=True,
         )
         self.worker.start()
@@ -730,6 +794,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         threads: int,
         glossary: str,
         custom_out: str | None,
+        export: str = "mono",
+        engine: str = "google",
+        engine_model: str | None = None,
     ) -> None:
         for index, path in enumerate(files, 1):
             if self.cancel_event.is_set():
@@ -750,6 +817,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                     pages=pages,
                     threads=threads,
                     overwrite=overwrite,
+                    engine=engine,
+                    engine_model=engine_model,
+                    export=export,
                     glossary=glossary,
                     on_progress=report,
                 )

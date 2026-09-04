@@ -2,7 +2,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __ruleset__ = "code4life-preservation-v1"
 __author__ = "Byaidu"
 __all__ = ["translate", "translate_stream"]

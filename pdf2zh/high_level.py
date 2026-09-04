@@ -106,6 +106,7 @@ def translate_patch(
         envs=envs,
         prompt=prompt,
         ignore_cache=ignore_cache,
+        cancellation_event=cancellation_event,
     )
 
     parser = PDFParser(inf)
@@ -206,7 +207,9 @@ def translate_patch(
             pre_layouts[pageno] = box
             if preservation is not None:
                 pre_preservations[pageno] = preservation
-                
+            
+            del pix
+            del image
             progress.update()
             if callback:
                 callback(progress)
@@ -267,6 +270,7 @@ def translate_stream(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    export: str = "mono",
     **kwarg: Any,
 ):
     font_list = [("tiro", None)]
@@ -323,15 +327,22 @@ def translate_stream(
         # print(ops_new.encode())
         doc_zh.update_stream(obj_id, ops_new.encode())
 
-    doc_en.insert_file(doc_zh)
-    for id in range(page_count):
-        doc_en.move_page(page_count + id, id * 2 + 1)
     if not skip_subset_fonts:
         doc_zh.subset_fonts(fallback=True)
-        doc_en.subset_fonts(fallback=True)
+    s_mono = doc_zh.write(deflate=True, garbage=3, use_objstms=1)
+
+    s_dual = None
+    if export in ("dual", "both"):
+        doc_en.insert_file(doc_zh)
+        for id in range(page_count):
+            doc_en.move_page(page_count + id, id * 2 + 1)
+        if not skip_subset_fonts:
+            doc_en.subset_fonts(fallback=True)
+        s_dual = doc_en.write(deflate=True, garbage=3, use_objstms=1)
+
     return (
-        doc_zh.write(deflate=True, garbage=3, use_objstms=1),
-        doc_en.write(deflate=True, garbage=3, use_objstms=1),
+        s_mono,
+        s_dual,
         translation_failures,
     )
 
@@ -403,6 +414,7 @@ def translate(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    export: str = "mono",
     **kwarg: Any,
 ):
     if not files:
@@ -466,10 +478,23 @@ def translate(
                     len(translation_failures),
                     source_path,
                 )
-            file_mono = Path(output) / f"{filename}-mono.pdf"
-            with open(file_mono, "wb") as doc_mono:
-                doc_mono.write(s_mono)
-            result_files.append((str(file_mono), len(translation_failures)))
+            
+            # Export mono PDF if requested
+            if export in ("mono", "both"):
+                file_mono = Path(output) / f"{filename}-mono.pdf"
+                with open(file_mono, "wb") as doc_mono:
+                    doc_mono.write(s_mono)
+                result_files.append((str(file_mono), len(translation_failures)))
+
+            # Export dual PDF if requested
+            if export in ("dual", "both") and _s_dual is not None:
+                file_dual = Path(output) / f"{filename}-dual.pdf"
+                with open(file_dual, "wb") as doc_dual:
+                    doc_dual.write(_s_dual)
+                if export == "dual":
+                    result_files.append((str(file_dual), len(translation_failures)))
+                else:
+                    result_files.append((str(file_dual), 0))
         except Exception as error:
             raise PDFValueError(f"Failed to translate {source_path}") from error
 
@@ -499,6 +524,10 @@ def download_remote_fonts(lang: str):
             Path(windir) / "Fonts" / "times.ttf",
             Path(windir) / "Fonts" / "TIMES.TTF",
             Path("C:/Windows/Fonts/times.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+            Path("/Library/Fonts/Times New Roman.ttf"),
+            Path("/System/Library/Fonts/Times.ttc"),
         ]
         for times_path in candidates:
             if times_path.exists():
