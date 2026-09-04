@@ -320,6 +320,16 @@ def translate_stream(
     doc_zh.save(fp)
     obj_patch, translation_failures = translate_patch(fp, **locals())
 
+    if callback:
+        try:
+            class FinalizingProgress:
+                def __init__(self, count):
+                    self.n = count
+                    self.total = count
+            callback(FinalizingProgress(page_count * 2))
+        except Exception:
+            pass
+
     for obj_id, ops_new in obj_patch.items():
         # ops_old=doc_en.xref_stream(obj_id)
         # print(obj_id)

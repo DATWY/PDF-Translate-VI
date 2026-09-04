@@ -228,6 +228,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_done = 0
         self.batch_total = 0
         self.start_time: float = 0
+        self.file_start_times: dict[Path, float] = {}
         self.last_output: Path | None = None
         self.outputs: dict[Path, Path] = {}
 
@@ -240,7 +241,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _load_config(self) -> dict:
         defaults = {
             "target_language": "vi",
-            "threads": 4,
+            "threads": 24,
             "auto_open": True,
             "custom_output_dir": "",
             "glossary": "Transformer, Attention, Deep Learning, API, Machine Learning, Loss function",
@@ -253,6 +254,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                     defaults.update(loaded)
         except Exception:
             pass
+        # Auto-clamp threads if user set an excessive number (e.g. 512) that triggers Google rate limiting
+        if defaults.get("threads", 24) > 64:
+            defaults["threads"] = 32
         return defaults
 
     def _save_config(self) -> None:
@@ -535,15 +539,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             font=ctk.CTkFont(self.ui_font, size=12),
         ).grid(row=3, column=0, padx=14, pady=6, sticky="w")
 
-        thread_val = self.config.get("threads", DEFAULT_THREADS)
+        thread_val = min(64, self.config.get("threads", DEFAULT_THREADS))
         self.threads_slider = ctk.CTkSlider(
-            p_frame, from_=1, to=512, number_of_steps=511,
+            p_frame, from_=2, to=64, number_of_steps=62,
             command=self._on_threads_change,
         )
         self.threads_slider.set(thread_val)
         self.threads_slider.grid(row=3, column=1, padx=14, pady=6, sticky="ew")
         self.threads_lbl = ctk.CTkLabel(
-            p_frame, text=f"{thread_val} luồng", font=ctk.CTkFont(self.mono_font, size=12)
+            p_frame, text=self._format_threads_lbl(thread_val), font=ctk.CTkFont(self.mono_font, size=11)
         )
         self.threads_lbl.grid(row=3, column=2, padx=(0, 14), sticky="w")
 
@@ -597,8 +601,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             font=ctk.CTkFont(self.ui_font, size=13, weight="bold"),
         ).grid(row=2, column=0, pady=16)
 
+    def _format_threads_lbl(self, val: int) -> str:
+        if val <= 32:
+            return f"{val} luồng (Tối ưu)"
+        return f"{val} luồng (⚠️ Dễ bị hạn chế)"
+
     def _on_threads_change(self, value: float) -> None:
-        self.threads_lbl.configure(text=f"{int(value)} luồng")
+        val = int(value)
+        self.threads_lbl.configure(text=self._format_threads_lbl(val))
 
     def _pick_custom_out_dir(self) -> None:
         chosen = ctk.filedialog.askdirectory()
@@ -804,6 +814,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 continue
 
             self.events.put(("status", path, "running", "", None))
+            self.events.put(("file_start", path, time.time()))
             destination = Path(custom_out) if custom_out else path.parent / "translated"
 
             def report(done: int, total: int, _p: Path = path) -> None:
@@ -909,25 +920,34 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
                 self._update_queue_header()
 
+            elif event[0] == "file_start":
+                _, path, t_start = event
+                self.file_start_times[path] = t_start
+
             elif event[0] == "page":
                 _, path, done, total = event
                 if self.states.get(path) == "running" and total:
                     total_pages = max(1, total // 2)
+                    is_saving = done >= total
                     is_phase_1 = done <= total_pages
                     
                     phase_name = "Quét AI" if is_phase_1 else "Dịch PDF"
                     current_page = done if is_phase_1 else (done - total_pages)
                     current_page = min(current_page, total_pages)
-                    
-                    percent = int((done / total) * 100)
+                    percent = min(100, int((done / total) * 100))
                     
                     lbl = self.row_labels.get(path)
                     if lbl:
-                        lbl.configure(
-                            text=f"{STATUS_MARKS['running']}  {path.name}  ➔  [{phase_name}] Trang {current_page}/{total_pages} ({percent}%)"
-                        )
+                        if is_saving:
+                            lbl.configure(
+                                text=f"{STATUS_MARKS['running']}  {path.name}  ➔  💾 Đang nén & lưu file PDF..."
+                            )
+                        else:
+                            lbl.configure(
+                                text=f"{STATUS_MARKS['running']}  {path.name}  ➔  [{phase_name}] Trang {current_page}/{total_pages} ({percent}%)"
+                            )
 
-                    overall_frac = (self.batch_done + done / total) / max(self.batch_total, 1)
+                    overall_frac = (self.batch_done + min(done, total) / total) / max(self.batch_total, 1)
                     
                     if is_phase_1:
                         self.progress_bar.configure(progress_color=("#d29922", "#e3b341"))
@@ -936,18 +956,36 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                         
                     self.progress_bar.set(overall_frac)
 
-                    # Calculate ETA
-                    elapsed = max(0.1, time.time() - self.start_time)
-                    pages_done = (self.batch_done * total) + done
-                    total_pages_est = max(1, self.batch_total * total)
-                    rate = pages_done / elapsed
-                    remaining_pages = max(0, total_pages_est - pages_done)
-                    eta_sec = remaining_pages / max(0.1, rate)
+                    if is_saving:
+                        self.status_lbl.configure(
+                            text=f"⏳ Đang hoàn tất & nén file PDF: {path.name} (vui lòng đợi giây lát)..."
+                        )
+                    else:
+                        # Per-file ETA
+                        f_start = self.file_start_times.get(path, self.start_time)
+                        f_elapsed = max(0.1, time.time() - f_start)
+                        f_rate = done / f_elapsed
+                        f_remain = max(0, total - done)
+                        f_eta_sec = f_remain / max(0.01, f_rate)
 
-                    eta_str = f" • Xong trong: {format_duration(eta_sec)}" if eta_sec > 5 else ""
-                    self.status_lbl.configure(
-                        text=f"⏳ Đang chạy: {path.name} — [{phase_name}] Trang {current_page}/{total_pages} ({percent}%){eta_str}"
-                    )
+                        # Entire queue ETA
+                        elapsed = max(0.1, time.time() - self.start_time)
+                        pages_done = (self.batch_done * total) + done
+                        total_pages_est = max(1, self.batch_total * total)
+                        rate = pages_done / elapsed
+                        remaining_pages = max(0, total_pages_est - pages_done)
+                        eta_sec = remaining_pages / max(0.01, rate)
+
+                        if self.batch_total > 1:
+                            eta_str = f" • File này: ~{format_duration(f_eta_sec)} | Cả hàng đợi ({self.batch_total} file): ~{format_duration(eta_sec)}"
+                        elif f_eta_sec > 3:
+                            eta_str = f" • Xong trong: ~{format_duration(f_eta_sec)}"
+                        else:
+                            eta_str = ""
+
+                        self.status_lbl.configure(
+                            text=f"⏳ Đang chạy: {path.name} — [{phase_name}] Trang {current_page}/{total_pages} ({percent}%){eta_str}"
+                        )
                     self.title(f"({int(overall_frac * 100)}%) VI Translate")
 
             elif event[0] == "progress":
